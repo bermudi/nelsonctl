@@ -8,15 +8,15 @@
 - [x] Write tests for parser and git helpers
 
 ## Phase 2: Agent Adapter
-- [ ] Define `Agent` interface (Name, Available, Run)
-- [ ] Implement `opencode` adapter with correct CLI flags
-- [ ] Implement `claude` adapter
-- [ ] Implement `codex` adapter
-- [ ] Implement `amp` adapter
-- [ ] Implement agent availability check (verify binary on PATH)
-- [ ] Implement output streaming via stdout pipe callback
-- [ ] Implement timeout + SIGTERM/SIGKILL termination
-- [ ] Write tests for command building and adapter selection
+- [x] Define `Agent` interface (Name, Available, Run)
+- [x] Implement `opencode` adapter with correct CLI flags
+- [x] Implement `claude` adapter
+- [x] Implement `codex` adapter
+- [x] Implement `amp` adapter
+- [x] Implement agent availability check (verify binary on PATH)
+- [x] Implement output streaming via stdout pipe callback
+- [x] Implement timeout + SIGTERM/SIGKILL termination
+- [x] Write tests for command building and adapter selection
 
 ## Phase 3: Pipeline Orchestrator
 - [ ] Implement pipeline state machine (Init → Branch → CommitArtifacts → PhaseLoop → FinalReview → PR → Done)
