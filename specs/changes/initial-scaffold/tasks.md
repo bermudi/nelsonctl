@@ -19,14 +19,14 @@
 - [x] Write tests for command building and adapter selection
 
 ## Phase 3: Pipeline Orchestrator
-- [ ] Implement pipeline state machine (Init → Branch → CommitArtifacts → PhaseLoop → FinalReview → PR → Done)
-- [ ] Implement prompt construction (apply, review, fix) referencing litespec skills
-- [ ] Implement review result detection (pass/fail from agent output)
-- [ ] Implement retry loop (3 total attempts per phase)
-- [ ] Implement phase commit with conventional message format
-- [ ] Implement final review (pre-archive mode prompt)
-- [ ] Implement PR creation via `gh` with fallback to manual instructions
-- [ ] Write tests for pipeline state transitions and retry logic
+- [x] Implement pipeline state machine (Init → Branch → CommitArtifacts → PhaseLoop → FinalReview → PR → Done)
+- [x] Implement prompt construction (apply, review, fix) referencing litespec skills
+- [x] Implement review result detection (pass/fail from agent output)
+- [x] Implement retry loop (3 total attempts per phase)
+- [x] Implement phase commit with conventional message format
+- [x] Implement final review (pre-archive mode prompt)
+- [x] Implement PR creation via `gh` with fallback to manual instructions
+- [x] Write tests for pipeline state transitions and retry logic
 
 ## Phase 4: TUI
 - [ ] Set up Bubble Tea model with two-panel layout (progress + output)
