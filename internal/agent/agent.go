@@ -48,7 +48,7 @@ type adapter struct {
 	runner           commandRunner
 }
 
-const defaultTerminationGrace = 2 * time.Second
+const defaultTerminationGrace = 250 * time.Millisecond
 
 // Option configures an adapter.
 type Option func(*adapter)
@@ -148,8 +148,4 @@ func New(name string, opts ...Option) (Agent, error) {
 	default:
 		return nil, fmt.Errorf("unknown agent %q", name)
 	}
-}
-
-func promptArgs(prompt string) []string {
-	return []string{"--prompt", prompt}
 }

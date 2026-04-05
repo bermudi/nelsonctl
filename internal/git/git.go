@@ -49,6 +49,24 @@ func (c *Client) executor() Executor {
 	return osExecutor{}
 }
 
+// IsClean returns nil when the worktree has no uncommitted changes.
+func (c *Client) IsClean(ctx context.Context) error {
+	return c.executor().Run(ctx, c.Dir, "git", "diff", "--quiet")
+}
+
+// BranchExists reports whether a branch name exists in the local repo.
+func (c *Client) BranchExists(ctx context.Context, branch string) (bool, error) {
+	exec := c.executor()
+	err := exec.Run(ctx, c.Dir, "git", "rev-parse", "--verify", branch)
+	if err == nil {
+		return true, nil
+	}
+	if strings.Contains(err.Error(), "fatal:") || strings.Contains(err.Error(), "Needed") {
+		return false, nil
+	}
+	return false, nil
+}
+
 // CreateBranch creates and checks out a new branch.
 func (c *Client) CreateBranch(ctx context.Context, branch string) error {
 	return c.executor().Run(ctx, c.Dir, "git", "checkout", "-b", branch)

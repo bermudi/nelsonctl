@@ -47,6 +47,9 @@ type Model struct {
 	aborted        bool
 	summary        *Summary
 	events         <-chan tea.Msg
+	taunt          string
+	pauseChan      chan struct{}
+	resumeChan     chan struct{}
 }
 
 // NewModel creates a TUI model from parsed phases.
@@ -63,6 +66,8 @@ func NewModel(phases []pipeline.Phase) Model {
 		state:       pipeline.StateInit,
 		viewport:    vp,
 		maxAttempts: 3,
+		pauseChan:   make(chan struct{}, 1),
+		resumeChan:  make(chan struct{}, 1),
 	}
 }
 
@@ -70,6 +75,16 @@ func NewModel(phases []pipeline.Phase) Model {
 func (m Model) WithEventChannel(ch <-chan tea.Msg) Model {
 	m.events = ch
 	return m
+}
+
+// PauseChan returns the channel that signals the pipeline to pause.
+func (m Model) PauseChan() <-chan struct{} {
+	return m.pauseChan
+}
+
+// ResumeChan returns the channel that signals the pipeline to resume.
+func (m Model) ResumeChan() <-chan struct{} {
+	return m.resumeChan
 }
 
 // Init starts the message pump when a channel is configured.
@@ -97,6 +112,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "p":
 			m.paused = !m.paused
+			if m.paused {
+				select {
+				case m.pauseChan <- struct{}{}:
+				default:
+				}
+			} else {
+				select {
+				case m.resumeChan <- struct{}{}:
+				default:
+				}
+			}
 			return m, m.nextEventCmd()
 		case "j", "down":
 			m.viewport.ScrollDown(1)
@@ -128,6 +154,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Duration:        msg.Duration.String(),
 			Branch:          msg.Branch,
 		}
+	case TauntMsg:
+		m.taunt = "HA-ha!"
 	}
 
 	if m.viewport.Width != m.outputWidth() || m.viewport.Height != m.outputHeight() {

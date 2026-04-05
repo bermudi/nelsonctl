@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/bermudi/nelsonctl/internal/agent"
 )
 
 // GitOps captures the git operations used by the pipeline.
 type GitOps interface {
+	IsClean(ctx context.Context) error
+	BranchExists(ctx context.Context, branch string) (bool, error)
 	CreateBranch(ctx context.Context, branch string) error
 	Add(ctx context.Context, paths ...string) error
 	Commit(ctx context.Context, subject, body string) error
@@ -49,6 +52,9 @@ type Report struct {
 	PullRequestNote   string
 }
 
+// EventHandler receives pipeline events for display (e.g. TUI messages).
+type EventHandler func(msg interface{})
+
 // Pipeline coordinates apply/review/fix across a change directory.
 type Pipeline struct {
 	ChangePath  string
@@ -56,6 +62,10 @@ type Pipeline struct {
 	Git         GitOps
 	PR          PullRequestCreator
 	MaxAttempts int
+	OnEvent     EventHandler
+	Confirm     func(prompt string) bool
+	PauseChan   <-chan struct{}
+	ResumeChan  <-chan struct{}
 }
 
 // New creates a pipeline with sensible defaults.
@@ -89,12 +99,29 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 
 	emitState := func(state State) {
 		report.States = append(report.States, state)
+		p.emit(StateEvent{State: state})
 	}
 
 	emitState(StateInit)
+
+	start := time.Now()
+
 	emitState(StateBranch)
-	if err := p.Git.CreateBranch(ctx, branchName); err != nil {
-		return report, err
+	if err := p.Git.IsClean(ctx); err != nil {
+		return report, fmt.Errorf("worktree has uncommitted changes, commit or stash before running: %w", err)
+	}
+	exists, err := p.Git.BranchExists(ctx, branchName)
+	if err != nil {
+		return report, fmt.Errorf("check branch existence: %w", err)
+	}
+	if exists {
+		if p.Confirm == nil || !p.Confirm(fmt.Sprintf("Branch %s already exists. Reuse it?", branchName)) {
+			return report, fmt.Errorf("branch %s already exists; reuse or delete it before running", branchName)
+		}
+	} else {
+		if err := p.Git.CreateBranch(ctx, branchName); err != nil {
+			return report, err
+		}
 	}
 
 	emitState(StateCommitArtifacts)
@@ -104,6 +131,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 
 	emitState(StatePhaseLoop)
 	for _, phase := range phases {
+		p.waitIfPaused(ctx)
 		phaseReport, err := p.runPhase(ctx, changeName, phase)
 		report.Phases = append(report.Phases, phaseReport)
 		if err != nil {
@@ -112,9 +140,22 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 	}
 
 	emitState(StateFinalReview)
-	finalRes, finalErr := p.Agent.Run(ctx, FinalReviewPrompt(changeName), p.ChangePath)
-	report.FinalReviewOutput = ReviewOutput(resultText(finalRes), errorText(finalErr))
-	report.FinalReviewPassed = ReviewPassed(report.FinalReviewOutput, resultExitCode(finalRes, finalErr))
+	p.waitIfPaused(ctx)
+	finalPrompt := FinalReviewPrompt(changeName)
+	for attempt := 1; attempt <= p.MaxAttempts; attempt++ {
+		finalRes, finalErr := p.Agent.Run(ctx, finalPrompt, p.ChangePath)
+		finalOutput := ReviewOutput(resultText(finalRes), errorText(finalErr))
+		finalExit := resultExitCode(finalRes, finalErr)
+		report.FinalReviewOutput = finalOutput
+		report.FinalReviewPassed = ReviewPassed(finalOutput, finalExit)
+
+		if report.FinalReviewPassed {
+			break
+		}
+		if attempt < p.MaxAttempts {
+			finalPrompt = FixPrompt(finalOutput)
+		}
+	}
 
 	emitState(StatePR)
 	if err := p.Git.Push(ctx, "origin", branchName, true); err != nil {
@@ -126,6 +167,21 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 		return report, prErr
 	}
 
+	var phasesCompleted, phasesFailed int
+	for _, pr := range report.Phases {
+		if pr.Passed {
+			phasesCompleted++
+		} else {
+			phasesFailed++
+		}
+	}
+	p.emit(SummaryEvent{
+		PhasesCompleted: phasesCompleted,
+		PhasesFailed:    phasesFailed,
+		Duration:        time.Since(start).Round(time.Millisecond).String(),
+		Branch:          branchName,
+	})
+
 	emitState(StateDone)
 	return report, nil
 }
@@ -136,8 +192,12 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 
 	for attempt := 1; attempt <= p.MaxAttempts; attempt++ {
 		report.Attempts = attempt
+		p.emit(PhaseStartEvent{Number: phase.Number, Name: phase.Name, Attempt: attempt})
 
 		applyRes, applyErr := p.Agent.Run(ctx, prompt, p.ChangePath)
+		if applyRes != nil && applyRes.Stdout != "" {
+			p.emit(OutputEvent{Chunk: applyRes.Stdout})
+		}
 		if applyErr != nil {
 			report.ReviewOutput = ReviewOutput(resultText(applyRes), errorText(applyErr))
 			if attempt == p.MaxAttempts {
@@ -150,7 +210,9 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 		reviewRes, reviewErr := p.Agent.Run(ctx, ReviewPrompt(changeName), p.ChangePath)
 		reviewOutput := ReviewOutput(resultText(reviewRes), errorText(reviewErr))
 		report.ReviewOutput = reviewOutput
-		if ReviewPassed(reviewOutput, resultExitCode(reviewRes, reviewErr)) {
+		passed := ReviewPassed(reviewOutput, resultExitCode(reviewRes, reviewErr))
+		p.emit(PhaseResultEvent{Number: phase.Number, Passed: passed, Attempts: attempt, Review: reviewOutput})
+		if passed {
 			report.Passed = true
 			break
 		}
@@ -161,7 +223,11 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 		prompt = FixPrompt(reviewOutput)
 	}
 
-	if err := p.commitPhase(ctx, phase); err != nil {
+	if !report.Passed && report.Attempts == p.MaxAttempts {
+		p.emit(TauntEvent{PhaseNumber: phase.Number})
+	}
+
+	if err := p.commitPhase(ctx, changeName, phase); err != nil {
 		return report, err
 	}
 
@@ -173,14 +239,15 @@ func (p *Pipeline) commitArtifacts(ctx context.Context, changeName string, phase
 		return err
 	}
 	body := fmt.Sprintf("Planning artifacts for %s\n\n%s", changeName, phaseSummary(phases))
-	return p.Git.Commit(ctx, fmt.Sprintf("chore: add planning artifacts for %s", changeName), body)
+	return p.Git.Commit(ctx, fmt.Sprintf("chore: add litespec artifacts for %s", changeName), body)
 }
 
-func (p *Pipeline) commitPhase(ctx context.Context, phase Phase) error {
+func (p *Pipeline) commitPhase(ctx context.Context, changeName string, phase Phase) error {
 	if err := p.Git.Add(ctx, p.ChangePath); err != nil {
 		return err
 	}
-	return p.Git.Commit(ctx, fmt.Sprintf("chore(phase-%d): %s", phase.Number, phase.Name), phaseBody(phase))
+	subject := fmt.Sprintf("feat(%s): complete phase %d - %s", changeName, phase.Number, phase.Name)
+	return p.Git.Commit(ctx, subject, phaseBody(phase))
 }
 
 func phaseSummary(phases []Phase) string {
@@ -195,7 +262,7 @@ func phaseBody(phase Phase) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Phase %d: %s\n", phase.Number, phase.Name)
 	for _, task := range phase.Tasks {
-		fmt.Fprintf(&b, "- %s\n", task.Text)
+		fmt.Fprintf(&b, "- [x] %s\n", task.Text)
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -226,4 +293,64 @@ func resultExitCode(res *agent.Result, err error) int {
 		return 1
 	}
 	return 0
+}
+
+func (p *Pipeline) emit(msg interface{}) {
+	if p.OnEvent != nil {
+		p.OnEvent(msg)
+	}
+}
+
+func (p *Pipeline) waitIfPaused(ctx context.Context) {
+	if p.PauseChan == nil {
+		return
+	}
+	select {
+	case <-p.PauseChan:
+		if p.ResumeChan != nil {
+			select {
+			case <-p.ResumeChan:
+			case <-ctx.Done():
+			}
+		}
+	case <-ctx.Done():
+	}
+}
+
+// StateEvent is emitted when the pipeline transitions states.
+type StateEvent struct {
+	State State
+}
+
+// PhaseStartEvent is emitted when a phase begins execution.
+type PhaseStartEvent struct {
+	Number  int
+	Name    string
+	Attempt int
+}
+
+// PhaseResultEvent is emitted when a phase completes.
+type PhaseResultEvent struct {
+	Number   int
+	Passed   bool
+	Attempts int
+	Review   string
+}
+
+// OutputEvent is emitted for agent output chunks.
+type OutputEvent struct {
+	Chunk string
+}
+
+// TauntEvent is emitted when a phase exhausts all retry attempts.
+type TauntEvent struct {
+	PhaseNumber int
+}
+
+// SummaryEvent is emitted when the pipeline finishes.
+type SummaryEvent struct {
+	PhasesCompleted int
+	PhasesFailed    int
+	Duration        string
+	Branch          string
 }

@@ -23,6 +23,10 @@ func (m Model) renderProgress() string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("Retries: %d/%d", m.currentAttempt, m.maxAttempts)))
 	b.WriteString("\n")
+	if m.paused {
+		b.WriteString(pausedStyle.Render("PAUSED"))
+		b.WriteString("\n")
+	}
 
 	if m.summary != nil {
 		b.WriteString("\n")
@@ -56,11 +60,15 @@ func (m Model) renderProgress() string {
 }
 
 func (m Model) renderOutput() string {
+	var header string
+	if m.taunt != "" {
+		header = tauntStyle.Render(m.taunt) + "\n"
+	}
 	content := m.viewport.View()
-	if content == "" {
+	if content == "" && header == "" {
 		content = mutedStyle.Render("Waiting for agent output...")
 	}
-	return panelStyle.Width(m.outputWidth()).Render(titleStyle.Render("Output") + "\n" + content)
+	return panelStyle.Width(m.outputWidth()).Render(titleStyle.Render("Output") + "\n" + header + content)
 }
 
 func (m Model) summaryLine(label string, value int) string {

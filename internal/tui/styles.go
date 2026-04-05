@@ -19,4 +19,6 @@ var (
 	passedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	failedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	mutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	pausedStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("220"))
+	tauntStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
 )

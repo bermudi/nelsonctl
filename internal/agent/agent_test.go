@@ -48,7 +48,9 @@ func TestNewRejectsUnknownAgent(t *testing.T) {
 }
 
 func TestAdapterAvailableUsesPATHLookup(t *testing.T) {
-	a := newAdapter("opencode", "opencode", promptArgs)
+	a := newAdapter("opencode", "opencode", func(prompt string) []string {
+		return []string{"run", "--format", "json", prompt}
+	})
 	a.lookupPath = func(binary string) (string, error) {
 		if binary != "opencode" {
 			t.Fatalf("lookupPath binary = %q, want opencode", binary)
@@ -76,25 +78,25 @@ func TestRunBuildsCommandsAndStreamsStdout(t *testing.T) {
 		{
 			name:     "opencode",
 			newAgent: NewOpencode,
-			wantArgs: []string{"exec", "--prompt", "implement phase 2"},
+			wantArgs: []string{"run", "--format", "json", "implement phase 2"},
 			wantName: "opencode",
 		},
 		{
 			name:     "claude",
 			newAgent: NewClaude,
-			wantArgs: []string{"-p", "implement phase 2"},
+			wantArgs: []string{"-p", "implement phase 2", "--allowedTools", "Bash,Read,Edit", "--output-format", "json"},
 			wantName: "claude",
 		},
 		{
 			name:     "codex",
 			newAgent: NewCodex,
-			wantArgs: []string{"--prompt", "implement phase 2"},
+			wantArgs: []string{"exec", "--json", "implement phase 2"},
 			wantName: "codex",
 		},
 		{
 			name:     "amp",
 			newAgent: NewAmp,
-			wantArgs: []string{"run", "--prompt", "implement phase 2"},
+			wantArgs: []string{"--execute", "--stream-json", "implement phase 2"},
 			wantName: "amp",
 		},
 	}

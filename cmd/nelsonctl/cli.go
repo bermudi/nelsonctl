@@ -12,6 +12,8 @@ import (
 	"github.com/bermudi/nelsonctl/internal/agent"
 	"github.com/bermudi/nelsonctl/internal/git"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
+	"github.com/bermudi/nelsonctl/internal/tui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type options struct {
@@ -61,10 +63,42 @@ func runCLI(ctx context.Context, args []string, cwd string, stdout, stderr io.Wr
 
 	gitClient := git.NewClient(cwd)
 	p := pipeline.New(absChangePath, agentClient, gitClient)
-	p.PR = noopPullRequestCreator{}
 
 	if !opts.noPR {
 		p.PR = pipeline.NewGHClient()
+	} else {
+		p.PR = noopPullRequestCreator{}
+	}
+
+	if !opts.verbose && !opts.dryRun {
+		events := make(chan tea.Msg, 64)
+		phases, parseErr := pipeline.ParseTasksFile(filepath.Join(absChangePath, "tasks.md"))
+		if parseErr != nil {
+			fmt.Fprintln(stderr, parseErr)
+			return 1
+		}
+
+		model := tui.NewModel(phases).WithEventChannel(events)
+		p.OnEvent = func(msg interface{}) {
+			events <- toTeaMsg(msg)
+		}
+		p.PauseChan = model.PauseChan()
+		p.ResumeChan = model.ResumeChan()
+
+		go func() {
+			_, runErr := p.Run(ctx)
+			close(events)
+			if runErr != nil {
+				model.Update(tui.OutputMsg{Chunk: runErr.Error()})
+			}
+		}()
+
+		prog := tea.NewProgram(model, tea.WithAltScreen())
+		if _, err := prog.Run(); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	}
 
 	report, err := p.Run(ctx)
@@ -146,4 +180,28 @@ type noopPullRequestCreator struct{}
 
 func (noopPullRequestCreator) Create(ctx context.Context, repoDir, title, bodyFile string) (string, error) {
 	return "PR creation skipped (--no-pr)", nil
+}
+
+func toTeaMsg(msg interface{}) tea.Msg {
+	switch m := msg.(type) {
+	case pipeline.StateEvent:
+		return tui.StateMsg{State: m.State}
+	case pipeline.PhaseStartEvent:
+		return tui.PhaseMsg{Number: m.Number, Name: m.Name, Attempt: m.Attempt}
+	case pipeline.PhaseResultEvent:
+		return tui.PhaseResultMsg{Number: m.Number, Passed: m.Passed, Attempts: m.Attempts, Review: m.Review}
+	case pipeline.OutputEvent:
+		return tui.OutputMsg{Chunk: m.Chunk}
+	case pipeline.TauntEvent:
+		return tui.TauntMsg{PhaseNumber: m.PhaseNumber}
+	case pipeline.SummaryEvent:
+		return tui.SummaryMsg{PhasesCompleted: m.PhasesCompleted, PhasesFailed: m.PhasesFailed, Duration: parseDuration(m.Duration), Branch: m.Branch}
+	default:
+		return nil
+	}
+}
+
+func parseDuration(s string) time.Duration {
+	d, _ := time.ParseDuration(s)
+	return d
 }

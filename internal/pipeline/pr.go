@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -58,5 +57,3 @@ func (g *GHClient) Create(ctx context.Context, repoDir, title, bodyFile string) 
 
 	return "", nil
 }
-
-var errNoPullRequestTitle = errors.New("pull request title is required")

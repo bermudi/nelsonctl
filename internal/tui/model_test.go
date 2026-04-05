@@ -69,3 +69,47 @@ func TestListenReturnsChannelMessage(t *testing.T) {
 		t.Fatalf("OutputMsg.Chunk = %q, want hello", out.Chunk)
 	}
 }
+
+func TestModelTauntMsgRendersInOutput(t *testing.T) {
+	m := NewModel([]pipeline.Phase{
+		{Number: 1, Name: "Foundation"},
+	})
+
+	updated, _ := m.Update(TauntMsg{PhaseNumber: 1})
+	m = updated.(Model)
+	if m.taunt != "HA-ha!" {
+		t.Fatalf("taunt = %q, want HA-ha!", m.taunt)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "HA-ha!") {
+		t.Fatalf("View() missing HA-ha! in %q", view)
+	}
+}
+
+func TestModelPauseSignalsChannel(t *testing.T) {
+	m := NewModel(nil)
+	m = m.WithEventChannel(make(chan tea.Msg))
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = updated.(Model)
+	if !m.paused {
+		t.Fatal("paused = false after pressing p")
+	}
+	select {
+	case <-m.PauseChan():
+	default:
+		t.Fatal("pause channel should have a signal")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = updated.(Model)
+	if m.paused {
+		t.Fatal("paused = true after pressing p again")
+	}
+	select {
+	case <-m.ResumeChan():
+	default:
+		t.Fatal("resume channel should have a signal")
+	}
+}

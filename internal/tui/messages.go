@@ -43,5 +43,7 @@ type SummaryMsg struct {
 	Branch          string
 }
 
-// AbortMsg is emitted when the user aborts the run.
-type AbortMsg struct{}
+// TauntMsg is emitted when a phase exhausts all retry attempts.
+type TauntMsg struct {
+	PhaseNumber int
+}

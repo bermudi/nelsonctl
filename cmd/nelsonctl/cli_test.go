@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/bermudi/nelsonctl/internal/pipeline"
+	"github.com/bermudi/nelsonctl/internal/tui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestRunCLIWithMockAgent(t *testing.T) {
@@ -19,19 +24,38 @@ func TestRunCLIWithMockAgent(t *testing.T) {
 	agentLog := filepath.Join(repoRoot, "agent.log")
 	gitLog := filepath.Join(repoRoot, "git.log")
 	ghLog := filepath.Join(repoRoot, "gh.log")
-	reviewState := filepath.Join(repoRoot, "review.count")
 
 	mustWriteScript(t, filepath.Join(binDir, "opencode"), `#!/bin/sh
 prompt=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --prompt|-p)
-      shift
+    -p)
+      shift; prompt="$1"; shift; continue
+      ;;
+    --format)
+      shift; shift; continue
+      ;;
+    --allowedTools)
+      shift; shift; continue
+      ;;
+    --output-format)
+      shift; shift; continue
+      ;;
+    --prompt)
+      shift; prompt="$1"; shift; continue
+      ;;
+    --json|--execute|--stream-json)
+      shift; continue
+      ;;
+    -*)
+      shift; continue
+      ;;
+    *)
       prompt="$1"
       ;;
   esac
   shift
- done
+done
 printf '%s\n' "$prompt" >> "$MOCK_AGENT_LOG"
 case "$prompt" in
   *"pre-archive mode"*)
@@ -41,17 +65,7 @@ case "$prompt" in
     echo "fixed after review"
     ;;
   *"litespec-review skill"*)
-    count=0
-    if [ -f "$MOCK_REVIEW_STATE" ]; then
-      count=$(cat "$MOCK_REVIEW_STATE")
-    fi
-    count=$((count + 1))
-    printf '%s' "$count" > "$MOCK_REVIEW_STATE"
-    if [ "$count" -eq 1 ]; then
-      echo "issues found: please fix"
-    else
-      echo "no issues found"
-    fi
+    echo "no issues found"
     ;;
   *)
     echo "applied changes"
@@ -59,6 +73,9 @@ case "$prompt" in
 esac
 `)
 	mustWriteScript(t, filepath.Join(binDir, "git"), `#!/bin/sh
+case "$1" in
+  rev-parse) exit 1 ;;
+esac
 echo "git $*" >> "$MOCK_GIT_LOG"
 `)
 	mustWriteScript(t, filepath.Join(binDir, "gh"), `#!/bin/sh
@@ -70,7 +87,6 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	t.Setenv("MOCK_AGENT_LOG", agentLog)
 	t.Setenv("MOCK_GIT_LOG", gitLog)
 	t.Setenv("MOCK_GH_LOG", ghLog)
-	t.Setenv("MOCK_REVIEW_STATE", reviewState)
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -82,7 +98,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	out := stdout.String()
 	for _, want := range []string{
 		"branch: change/initial-scaffold",
-		"phase 1: attempts=2 passed=true",
+		"phase 1: attempts=1 passed=true",
 		"phase 2: attempts=",
 		"final review passed: true",
 		"applied changes",
@@ -94,7 +110,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	}
 
 	agentLogData := mustReadFile(t, agentLog)
-	for _, want := range []string{"litespec-apply skill", "The review found these issues:", "pre-archive mode"} {
+	for _, want := range []string{"litespec-apply skill", "litespec-review skill", "pre-archive mode"} {
 		if !strings.Contains(agentLogData, want) {
 			t.Fatalf("agent log missing %q in %q", want, agentLogData)
 		}
@@ -104,7 +120,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	for _, want := range []string{
 		"git checkout -b change/initial-scaffold",
 		"git add --",
-		"git commit -m chore: add planning artifacts for initial-scaffold",
+		"git commit -m chore: add litespec artifacts for initial-scaffold",
 		"git push -u origin change/initial-scaffold",
 	} {
 		if !strings.Contains(gitLogData, want) {
@@ -171,6 +187,9 @@ func TestRunCLINoPRSkipsPRCreation(t *testing.T) {
 echo "ok"
 `)
 	mustWriteScript(t, filepath.Join(binDir, "git"), `#!/bin/sh
+case "$1" in
+  rev-parse) exit 1 ;;
+esac
 echo "git $*" >> "$MOCK_GIT_LOG"
 `)
 	mustWriteScript(t, filepath.Join(binDir, "gh"), `#!/bin/sh
@@ -183,7 +202,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runCLI(context.Background(), []string{"--no-pr", "--agent", "opencode", changeDir}, repoRoot, stdout, stderr)
+	code := runCLI(context.Background(), []string{"--no-pr", "--verbose", "--agent", "opencode", changeDir}, repoRoot, stdout, stderr)
 	if code != 0 {
 		t.Fatalf("runCLI() code = %d, stderr = %s", code, stderr.String())
 	}
@@ -218,4 +237,64 @@ func mustReadFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+func TestToTeaMsgBridgesAllEventTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		event   interface{}
+		want    tea.Msg
+		wantNil bool
+	}{
+		{
+			name:  "state event",
+			event: pipeline.StateEvent{State: pipeline.StatePhaseLoop},
+			want:  tui.StateMsg{State: pipeline.StatePhaseLoop},
+		},
+		{
+			name:  "phase start event",
+			event: pipeline.PhaseStartEvent{Number: 1, Name: "Foundation", Attempt: 2},
+			want:  tui.PhaseMsg{Number: 1, Name: "Foundation", Attempt: 2},
+		},
+		{
+			name:  "phase result event",
+			event: pipeline.PhaseResultEvent{Number: 1, Passed: true, Attempts: 2, Review: "ok"},
+			want:  tui.PhaseResultMsg{Number: 1, Passed: true, Attempts: 2, Review: "ok"},
+		},
+		{
+			name:  "output event",
+			event: pipeline.OutputEvent{Chunk: "hello"},
+			want:  tui.OutputMsg{Chunk: "hello"},
+		},
+		{
+			name:  "taunt event",
+			event: pipeline.TauntEvent{PhaseNumber: 3},
+			want:  tui.TauntMsg{PhaseNumber: 3},
+		},
+		{
+			name:  "summary event",
+			event: pipeline.SummaryEvent{PhasesCompleted: 2, PhasesFailed: 1, Duration: "1m30s", Branch: "change/foo"},
+			want:  tui.SummaryMsg{PhasesCompleted: 2, PhasesFailed: 1, Duration: 90 * time.Second, Branch: "change/foo"},
+		},
+		{
+			name:    "unknown event",
+			event:   "not a real event",
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := toTeaMsg(tt.event)
+			if tt.wantNil {
+				if got != nil {
+					t.Fatalf("toTeaMsg() = %T, want nil", got)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("toTeaMsg() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
 }
