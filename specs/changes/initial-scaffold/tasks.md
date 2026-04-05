@@ -39,7 +39,7 @@
 - [x] Write tests for TUI model state transitions
 
 ## Phase 5: Integration & Polish
-- [ ] Wire CLI flag parsing (--agent, --timeout, --dry-run, --no-pr, --verbose)
-- [ ] End-to-end test with a mock agent (script that simulates apply/review/fix)
-- [ ] Add `--dry-run` mode that prints pipeline plan without executing
-- [ ] Write README with usage examples
+- [x] Wire CLI flag parsing (--agent, --timeout, --dry-run, --no-pr, --verbose)
+- [x] End-to-end test with a mock agent (script that simulates apply/review/fix)
+- [x] Add `--dry-run` mode that prints pipeline plan without executing
+- [x] Write README with usage examples
