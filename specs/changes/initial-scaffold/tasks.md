@@ -1,11 +1,11 @@
 # Tasks
 
 ## Phase 1: Foundation
-- [ ] Initialize Go module (`github.com/bermudi/nelsonctl`)
-- [ ] Set up project structure (`cmd/nelsonctl/`, `internal/`)
-- [ ] Implement `tasks.md` parser — extract phases and tasks from markdown checkboxes
-- [ ] Implement git operations — branch, add, commit, push
-- [ ] Write tests for parser and git helpers
+- [x] Initialize Go module (`github.com/bermudi/nelsonctl`)
+- [x] Set up project structure (`cmd/nelsonctl/`, `internal/`)
+- [x] Implement `tasks.md` parser — extract phases and tasks from markdown checkboxes
+- [x] Implement git operations — branch, add, commit, push
+- [x] Write tests for parser and git helpers
 
 ## Phase 2: Agent Adapter
 - [ ] Define `Agent` interface (Name, Available, Run)
