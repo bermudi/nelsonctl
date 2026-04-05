@@ -29,14 +29,14 @@
 - [x] Write tests for pipeline state transitions and retry logic
 
 ## Phase 4: TUI
-- [ ] Set up Bubble Tea model with two-panel layout (progress + output)
-- [ ] Implement phase progress panel (pending/running/passed/failed indicators)
-- [ ] Implement agent output streaming panel with scrollback
-- [ ] Implement retry counter display
-- [ ] Implement keybindings (q/ctrl+c abort, p pause, j/k scroll)
-- [ ] Implement exit summary (phases completed, failed, duration, branch)
-- [ ] Wire pipeline messages to TUI updates via channels
-- [ ] Write tests for TUI model state transitions
+- [x] Set up Bubble Tea model with two-panel layout (progress + output)
+- [x] Implement phase progress panel (pending/running/passed/failed indicators)
+- [x] Implement agent output streaming panel with scrollback
+- [x] Implement retry counter display
+- [x] Implement keybindings (q/ctrl+c abort, p pause, j/k scroll)
+- [x] Implement exit summary (phases completed, failed, duration, branch)
+- [x] Wire pipeline messages to TUI updates via channels
+- [x] Write tests for TUI model state transitions
 
 ## Phase 5: Integration & Polish
 - [ ] Wire CLI flag parsing (--agent, --timeout, --dry-run, --no-pr, --verbose)
