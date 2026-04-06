@@ -11,7 +11,15 @@ The adapter SHALL subscribe to `GET /global/event` (SSE) for the lifetime of the
 
 #### Scenario: Tool execution events
 - **WHEN** opencode emits tool execution events during a step
-- **THEN** the adapter surfaces tool names and statuses in the TUI output panel
+- **THEN** the adapter emits `Event{Type: TextEvent, Content: "[tool] <tool_name> <status>"}` to the `Events()` channel
+
+#### Scenario: Server error event
+- **WHEN** the opencode server returns an error or the SSE stream reports an error
+- **THEN** the adapter emits `Event{Type: ErrorEvent, Content: err.Error()}` to the `Events()` channel
+
+#### Scenario: Step completion event
+- **WHEN** a synchronous message call completes and the adapter has extracted the response
+- **THEN** the adapter emits `Event{Type: CompletionEvent}` to the `Events()` channel to signal step boundary
 
 ### Requirement: Event Coalescing
 The adapter SHALL coalesce rapid SSE events onto a 50ms render tick (configurable via `opencode.event_coalesce_ms` in `config.yaml`, default: 50) before forwarding them to the TUI via the `Events()` channel, so that bursty model output does not block the Bubble Tea render loop. The full text MUST be preserved in memory even when batches are coalesced for rendering.

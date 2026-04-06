@@ -3,14 +3,14 @@
 ## ADDED Requirements
 
 ### Requirement: Managed Server Process
-The opencode RPC adapter SHALL start `opencode serve` as a managed child process with a dynamically assigned port (`--port 0`) and SHALL wait for the server to report healthy via `GET /global/health` before accepting pipeline work. The adapter MUST shut down the server process when the pipeline completes, aborts, or encounters an unrecoverable error.
+The opencode RPC adapter SHALL start `opencode serve` as a managed child process with a dynamically assigned port (`--port 0`) and SHALL probe `GET /global/health` with exponential backoff until the server reports `{ healthy: true }` before accepting pipeline work. The adapter MUST shut down the server process when the pipeline completes, aborts, or encounters an unrecoverable error.
 
 #### Scenario: Server starts and becomes healthy
 - **WHEN** nelsonctl selects opencode as the RPC agent and starts a pipeline run
-- **THEN** the adapter launches `opencode serve --port 0`, reads the assigned port from stdout or probes until `GET /global/health` returns `{ healthy: true }`, and proceeds with pipeline work
+- **THEN** the adapter launches `opencode serve --port 0`, probes `GET /global/health` with backoff until it returns `{ healthy: true }`, captures the assigned port from the server's bound address, and proceeds with pipeline work
 
 #### Scenario: Server fails to start
-- **WHEN** `opencode serve` exits with a non-zero code during startup or does not become healthy within a configurable timeout
+- **WHEN** `opencode serve` exits with a non-zero code during startup or does not become healthy within `opencode.startup_timeout_ms` (default: 10000, configurable in `config.yaml`)
 - **THEN** nelsonctl reports a startup error with the server's stderr output and does not proceed with the pipeline
 
 #### Scenario: Server crashes mid-run
@@ -41,7 +41,7 @@ The adapter SHALL support overriding the server subcommand via the `OPENCODE_SER
 
 #### Scenario: Server command override for debugging
 - **WHEN** `OPENCODE_SERVER_COMMAND=web` is set in the environment
-- **THEN** the server manager launches `opencode web --port 0` instead of `opencode serve --port 0`
+- **THEN** the server manager launches `opencode web --port 0` instead of `opencode serve --port 0`. This assumes `opencode web` exposes the same HTTP API and health endpoint as `opencode serve`; if the web command does not support `--port 0`, the adapter falls back to `opencode serve`.
 
 #### Scenario: Default server command
 - **WHEN** `OPENCODE_SERVER_COMMAND` is not set

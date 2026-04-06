@@ -38,7 +38,7 @@ No OpenAPI code generation in this change. The server API surface needed for the
 
 ### OpenCode version requirement
 
-This adapter targets opencode's HTTP server API. Requires opencode with HTTP server support (`opencode serve` subcommand). The hand-written client covers the endpoints documented in opencode's server API as of the current release.
+This adapter targets opencode's HTTP server API. Requires opencode >= v0.5.0 (or equivalent version with `opencode serve` subcommand). The prerequisite check validates both binary presence and server capability. The hand-written client covers the endpoints documented in opencode's server API as of the current release.
 
 ### Separate sessions for apply and review
 
@@ -56,7 +56,7 @@ The pipeline runs unattended, so opencode permission requests are auto-approved.
 
 - `internal/agent/occlient.go` — typed HTTP client for session CRUD (`POST/GET/DELETE /session`), message sending (`POST /session/:id/message`), abort (`POST /session/:id/abort`), permission approval (`POST /session/:id/permissions/:permissionID`), health check (`GET /global/health`), and server disposal (`POST /instance/dispose`). Supports all session management and streaming requirements.
 
-- `internal/agent/ocsse.go` — SSE client that reads `GET /global/event`, parses event types, coalesces text deltas, and forwards to the pipeline event handler. Runs on a separate goroutine from blocking message calls. Supports `SSE Event Consumption` and `Event Coalescing`.
+- `internal/agent/ocsse.go` — SSE client that reads `GET /global/event`, parses event types, coalesces text deltas, and forwards typed events to the `Events() <-chan Event` channel. Runs on a separate goroutine from blocking message calls. Supports `SSE Event Consumption` and `Event Coalescing`.
 
 - `internal/agent/opencode-rpc_test.go` — tests for server lifecycle, session management, response extraction, crash recovery, and event coalescing using a mock HTTP server.
 
