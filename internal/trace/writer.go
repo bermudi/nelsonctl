@@ -1,0 +1,210 @@
+package trace
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sync"
+
+	"github.com/bermudi/nelsonctl/internal/pipeline"
+)
+
+const (
+	channelCap = 1024
+	bufSize    = 64 * 1024
+)
+
+type TraceWriter struct {
+	path       string
+	file       *os.File
+	writer     *bufio.Writer
+	ch         chan interface{}
+	done       chan struct{}
+	failed     bool
+	failMu     sync.RWMutex
+	closeOnce  sync.Once
+	closed     bool
+	closedMu   sync.Mutex
+}
+
+func New(path string, meta RunMetaEvent) (*TraceWriter, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("create trace file: %w", err)
+	}
+
+	writer := bufio.NewWriterSize(file, bufSize)
+
+	meta.Type = "run_meta"
+	if err := json.NewEncoder(writer).Encode(meta); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("write run_meta: %w", err)
+	}
+	if err := writer.Flush(); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("flush run_meta: %w", err)
+	}
+
+	tw := &TraceWriter{
+		path:   path,
+		file:   file,
+		writer: writer,
+		ch:     make(chan interface{}, channelCap),
+		done:   make(chan struct{}),
+	}
+
+	go tw.process()
+
+	return tw, nil
+}
+
+func (tw *TraceWriter) Send(msg interface{}) {
+	if msg == nil {
+		return
+	}
+	tw.closedMu.Lock()
+	closed := tw.closed
+	tw.closedMu.Unlock()
+	if closed {
+		return
+	}
+
+	tw.failMu.RLock()
+	failed := tw.failed
+	tw.failMu.RUnlock()
+	if failed {
+		return
+	}
+	select {
+	case tw.ch <- msg:
+	default:
+	}
+}
+
+func (tw *TraceWriter) Close(runEnd RunEndEvent) error {
+	tw.closedMu.Lock()
+	if tw.closed {
+		tw.closedMu.Unlock()
+		return nil
+	}
+	tw.closed = true
+	tw.closedMu.Unlock()
+
+	tw.closeOnce.Do(func() {
+		close(tw.ch)
+		<-tw.done
+	})
+
+	tw.failMu.RLock()
+	failed := tw.failed
+	tw.failMu.RUnlock()
+
+	runEnd.Type = "run_end"
+	runEnd.Ts = timestamp()
+
+	if !failed {
+		if err := json.NewEncoder(tw.writer).Encode(runEnd); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR trace: write run_end: %v\n", err)
+		}
+		if err := tw.writer.Flush(); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR trace: flush: %v\n", err)
+		}
+		if err := tw.file.Sync(); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR trace: sync: %v\n", err)
+		}
+	}
+
+	if err := tw.file.Close(); err != nil {
+		return fmt.Errorf("close file: %w", err)
+	}
+
+	return nil
+}
+
+func (tw *TraceWriter) process() {
+	defer close(tw.done)
+	enc := json.NewEncoder(tw.writer)
+	for msg := range tw.ch {
+		tw.failMu.RLock()
+		failed := tw.failed
+		tw.failMu.RUnlock()
+		if failed {
+			continue
+		}
+
+		traceEvent := tw.toTraceEvent(msg)
+		if traceEvent == nil {
+			continue
+		}
+
+		if err := enc.Encode(traceEvent); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR trace: write event: %v\n", err)
+			tw.failMu.Lock()
+			tw.failed = true
+			tw.failMu.Unlock()
+			continue
+		}
+	}
+
+	tw.failMu.RLock()
+	failed := tw.failed
+	tw.failMu.RUnlock()
+
+	if !failed {
+		if err := tw.writer.Flush(); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR trace: final flush: %v\n", err)
+		}
+	}
+}
+
+func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
+	switch e := msg.(type) {
+	case pipeline.StateEvent:
+		return StateChangeEvent{
+			Type:  "state_change",
+			State: string(e.State),
+			Ts:    timestamp(),
+		}
+	case pipeline.PhaseStartEvent:
+		return PhaseStartEvent{
+			Type:    "phase_start",
+			Phase:   e.Number,
+			Name:    e.Name,
+			Attempt: e.Attempt,
+			Ts:      timestamp(),
+		}
+	case pipeline.OutputEvent:
+		return OutputChunkEvent{
+			Type:  "output_chunk",
+			Chunk: e.Chunk,
+			Ts:    timestamp(),
+		}
+	case pipeline.TauntEvent:
+		return TauntEvent{
+			Type:  "taunt",
+			Phase: e.PhaseNumber,
+			Ts:    timestamp(),
+		}
+	case pipeline.SummaryEvent:
+		return SummaryEvent{
+			Type:            "summary",
+			PhasesCompleted: e.PhasesCompleted,
+			PhasesFailed:    e.PhasesFailed,
+			Duration:        e.Duration,
+			Branch:          e.Branch,
+			Ts:              timestamp(),
+		}
+	case pipeline.PhaseResultEvent:
+		return PhaseResultEvent{
+			Type:     "phase_result",
+			Phase:    e.Number,
+			Passed:   e.Passed,
+			Attempts: e.Attempts,
+			Review:   e.Review,
+			Ts:       timestamp(),
+		}
+	default:
+		return nil
+	}
+}
