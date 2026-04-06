@@ -58,13 +58,13 @@ while [ $# -gt 0 ]; do
 done
 printf '%s\n' "$prompt" >> "$MOCK_AGENT_LOG"
 case "$prompt" in
-  *"final review"*)
+  *"pre-archive mode"*)
     echo "final review: no issues found"
     ;;
   *"The review found these issues:"*)
     echo "fixed after review"
     ;;
-  *"Review the implementation"*)
+  *"litespec-review skill"*)
     echo "no issues found"
     ;;
   *)
@@ -111,7 +111,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	}
 
 	agentLogData := mustReadFile(t, agentLog)
-	for _, want := range []string{"Implement phase 1", "Review the implementation", "final review"} {
+	for _, want := range []string{"litespec-apply skill", "litespec-review skill", "pre-archive mode"} {
 		if !strings.Contains(agentLogData, want) {
 			t.Fatalf("agent log missing %q in %q", want, agentLogData)
 		}

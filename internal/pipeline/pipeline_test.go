@@ -175,7 +175,7 @@ func TestPipelineRunTransitionsAndRetries(t *testing.T) {
 	if got, want := len(fa.calls), 7; got != want {
 		t.Fatalf("len(agent.calls) = %d, want %d", got, want)
 	}
-	if !strings.Contains(fa.calls[0], "Implement phase 1") || !strings.Contains(fa.calls[1], "Review the implementation") {
+	if !strings.Contains(fa.calls[0], "litespec-apply skill") || !strings.Contains(fa.calls[1], "litespec-review skill") {
 		t.Fatalf("agent prompts not constructed as expected: %#v", fa.calls[:2])
 	}
 }
@@ -458,16 +458,16 @@ func TestReviewPassed(t *testing.T) {
 func TestPromptConstruction(t *testing.T) {
 	phase := Phase{Number: 1, Name: "Foundation", Tasks: []Task{{Text: "Initialize module"}, {Text: "Set up structure"}}}
 
-	if got := ApplyPrompt("initial-scaffold", phase); !strings.Contains(got, "Implement phase 1 of change initial-scaffold") || !strings.Contains(got, "Initialize module") {
+	if got := ApplyPrompt("initial-scaffold", phase); !strings.Contains(got, "litespec-apply skill") || !strings.Contains(got, "specs/changes/initial-scaffold/proposal.md") || !strings.Contains(got, "Initialize module") {
 		t.Fatalf("ApplyPrompt() = %q", got)
 	}
-	if got := ReviewPrompt("initial-scaffold"); !strings.Contains(got, "Review the implementation of change initial-scaffold") {
+	if got := ReviewPrompt("initial-scaffold"); !strings.Contains(got, "litespec-review skill") || !strings.Contains(got, "specs/changes/initial-scaffold/proposal.md") {
 		t.Fatalf("ReviewPrompt() = %q", got)
 	}
 	if got := FixPrompt("issues found"); !strings.Contains(got, "The review found these issues: issues found. Fix them.") {
 		t.Fatalf("FixPrompt() = %q", got)
 	}
-	if got := FinalReviewPrompt("initial-scaffold"); !strings.Contains(got, "final review") {
+	if got := FinalReviewPrompt("initial-scaffold"); !strings.Contains(got, "litespec-review skill") || !strings.Contains(got, "pre-archive mode") {
 		t.Fatalf("FinalReviewPrompt() = %q", got)
 	}
 }
