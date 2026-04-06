@@ -16,7 +16,7 @@ The system SHALL define a pipeline-facing `Agent` interface in `internal/agent/a
 ### Requirement: RPCAgent Extension Interface
 The system SHALL define an `RPCAgent` interface in `internal/agent/adapter.go` that extends `Agent` with session management, persistent messaging, and abort capability. An `Agent` implements `RPCAgent` only if it supports persistent sessions across steps. The interface SHALL include:
 
-- `AsRPC() *RPCAgent` — returns the RPC interface if the agent supports persistent sessions, or `nil` for CLI-only agents
+- `AsRPC() RPCAgent` — returns the RPC interface if the agent supports persistent sessions, or `nil` for CLI-only agents
 - `StartImplementationSession(ctx) (sessionID, error)` — creates or returns the long-lived session for apply and fix steps
 - `StartReviewSession(ctx) (sessionID, error)` — creates a fresh disposable session for a review pass
 - `SendMessage(ctx, sessionID, prompt, model) (result, error)` — sends a prompt to the session and blocks until completion
