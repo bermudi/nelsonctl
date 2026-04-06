@@ -15,6 +15,7 @@ type GitOps interface {
 	IsClean(ctx context.Context) error
 	BranchExists(ctx context.Context, branch string) (bool, error)
 	CreateBranch(ctx context.Context, branch string) error
+	Checkout(ctx context.Context, branch string) error
 	Add(ctx context.Context, paths ...string) error
 	Commit(ctx context.Context, subject, body string) error
 	Push(ctx context.Context, remote, branch string, setUpstream bool) error
@@ -52,8 +53,18 @@ type Report struct {
 	PullRequestNote   string
 }
 
+// Event is a sealed interface for all pipeline events.
+type Event interface{ pipelineEvent() }
+
+func (StateEvent) pipelineEvent()       {}
+func (PhaseStartEvent) pipelineEvent()  {}
+func (PhaseResultEvent) pipelineEvent() {}
+func (OutputEvent) pipelineEvent()      {}
+func (TauntEvent) pipelineEvent()       {}
+func (SummaryEvent) pipelineEvent()     {}
+
 // EventHandler receives pipeline events for display (e.g. TUI messages).
-type EventHandler func(msg interface{})
+type EventHandler func(msg Event)
 
 // Pipeline coordinates apply/review/fix across a change directory.
 type Pipeline struct {
@@ -118,6 +129,9 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 		if p.Confirm == nil || !p.Confirm(fmt.Sprintf("Branch %s already exists. Reuse it?", branchName)) {
 			return report, fmt.Errorf("branch %s already exists; reuse or delete it before running", branchName)
 		}
+		if err := p.Git.Checkout(ctx, branchName); err != nil {
+			return report, fmt.Errorf("checkout existing branch %s: %w", branchName, err)
+		}
 	} else {
 		if err := p.Git.CreateBranch(ctx, branchName); err != nil {
 			return report, err
@@ -137,34 +151,9 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 		if err != nil {
 			return report, err
 		}
-	}
-
-	emitState(StateFinalReview)
-	p.waitIfPaused(ctx)
-	finalPrompt := FinalReviewPrompt(changeName)
-	for attempt := 1; attempt <= p.MaxAttempts; attempt++ {
-		finalRes, finalErr := p.Agent.Run(ctx, finalPrompt, p.ChangePath)
-		finalOutput := ReviewOutput(resultText(finalRes), errorText(finalErr))
-		finalExit := resultExitCode(finalRes, finalErr)
-		report.FinalReviewOutput = finalOutput
-		report.FinalReviewPassed = ReviewPassed(finalOutput, finalExit)
-
-		if report.FinalReviewPassed {
+		if !phaseReport.Passed {
 			break
 		}
-		if attempt < p.MaxAttempts {
-			finalPrompt = FixPrompt(finalOutput)
-		}
-	}
-
-	emitState(StatePR)
-	if err := p.Git.Push(ctx, "origin", branchName, true); err != nil {
-		return report, err
-	}
-	note, prErr := p.PR.Create(ctx, p.ChangePath, changeName, filepath.Join(p.ChangePath, "proposal.md"))
-	report.PullRequestNote = note
-	if prErr != nil {
-		return report, prErr
 	}
 
 	var phasesCompleted, phasesFailed int
@@ -175,6 +164,44 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 			phasesFailed++
 		}
 	}
+
+	if phasesFailed == 0 {
+		emitState(StateFinalReview)
+		p.waitIfPaused(ctx)
+		for attempt := 1; attempt <= p.MaxAttempts; attempt++ {
+			reviewRes, reviewErr := p.Agent.Run(ctx, FinalReviewPrompt(changeName), p.ChangePath)
+			reviewOutput := ReviewOutput(resultText(reviewRes), errorText(reviewErr))
+			reviewExit := resultExitCode(reviewRes, reviewErr)
+			report.FinalReviewOutput = reviewOutput
+			report.FinalReviewPassed = ReviewPassed(reviewOutput, reviewExit)
+
+			if report.FinalReviewPassed {
+				break
+			}
+			if attempt < p.MaxAttempts {
+				fixRes, fixErr := p.Agent.Run(ctx, FixPrompt(reviewOutput), p.ChangePath)
+				if fixRes != nil && fixRes.Stdout != "" {
+					p.emit(OutputEvent{Chunk: fixRes.Stdout})
+				}
+				if fixErr != nil || resultExitCode(fixRes, fixErr) != 0 {
+					continue
+				}
+			}
+		}
+
+		if report.FinalReviewPassed {
+			emitState(StatePR)
+			if err := p.Git.Push(ctx, "origin", branchName, true); err != nil {
+				return report, err
+			}
+			note, prErr := p.PR.Create(ctx, p.ChangePath, changeName, filepath.Join(p.ChangePath, "proposal.md"))
+			report.PullRequestNote = note
+			if prErr != nil {
+				return report, prErr
+			}
+		}
+	}
+
 	p.emit(SummaryEvent{
 		PhasesCompleted: phasesCompleted,
 		PhasesFailed:    phasesFailed,
@@ -191,6 +218,9 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 	prompt := ApplyPrompt(changeName, phase)
 
 	for attempt := 1; attempt <= p.MaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
 		report.Attempts = attempt
 		p.emit(PhaseStartEvent{Number: phase.Number, Name: phase.Name, Attempt: attempt})
 
@@ -198,7 +228,8 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 		if applyRes != nil && applyRes.Stdout != "" {
 			p.emit(OutputEvent{Chunk: applyRes.Stdout})
 		}
-		if applyErr != nil {
+		applyExit := resultExitCode(applyRes, applyErr)
+		if applyErr != nil || applyExit != 0 {
 			report.ReviewOutput = ReviewOutput(resultText(applyRes), errorText(applyErr))
 			if attempt == p.MaxAttempts {
 				break
@@ -227,8 +258,10 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 		p.emit(TauntEvent{PhaseNumber: phase.Number})
 	}
 
-	if err := p.commitPhase(ctx, changeName, phase); err != nil {
-		return report, err
+	if report.Passed {
+		if err := p.commitPhase(ctx, changeName, phase); err != nil {
+			return report, err
+		}
 	}
 
 	return report, nil
@@ -243,7 +276,7 @@ func (p *Pipeline) commitArtifacts(ctx context.Context, changeName string, phase
 }
 
 func (p *Pipeline) commitPhase(ctx context.Context, changeName string, phase Phase) error {
-	if err := p.Git.Add(ctx, p.ChangePath); err != nil {
+	if err := p.Git.Add(ctx, "."); err != nil {
 		return err
 	}
 	subject := fmt.Sprintf("feat(%s): complete phase %d - %s", changeName, phase.Number, phase.Name)
@@ -295,7 +328,7 @@ func resultExitCode(res *agent.Result, err error) int {
 	return 0
 }
 
-func (p *Pipeline) emit(msg interface{}) {
+func (p *Pipeline) emit(msg Event) {
 	if p.OnEvent != nil {
 		p.OnEvent(msg)
 	}
@@ -314,6 +347,7 @@ func (p *Pipeline) waitIfPaused(ctx context.Context) {
 			}
 		}
 	case <-ctx.Done():
+	default:
 	}
 }
 

@@ -72,6 +72,11 @@ func (c *Client) CreateBranch(ctx context.Context, branch string) error {
 	return c.executor().Run(ctx, c.Dir, "git", "checkout", "-b", branch)
 }
 
+// Checkout switches to an existing branch.
+func (c *Client) Checkout(ctx context.Context, branch string) error {
+	return c.executor().Run(ctx, c.Dir, "git", "checkout", branch)
+}
+
 // Add stages one or more paths.
 func (c *Client) Add(ctx context.Context, paths ...string) error {
 	if len(paths) == 0 {

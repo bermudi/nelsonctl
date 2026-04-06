@@ -79,23 +79,33 @@ func runCLI(ctx context.Context, args []string, cwd string, stdout, stderr io.Wr
 		}
 
 		model := tui.NewModel(phases).WithEventChannel(events)
-		p.OnEvent = func(msg interface{}) {
+		p.OnEvent = func(msg pipeline.Event) {
 			events <- toTeaMsg(msg)
 		}
 		p.PauseChan = model.PauseChan()
 		p.ResumeChan = model.ResumeChan()
 
+		type runResult struct {
+			report *pipeline.Report
+			err    error
+		}
+		resultCh := make(chan runResult, 1)
+
 		go func() {
-			_, runErr := p.Run(ctx)
+			report, runErr := p.Run(ctx)
 			close(events)
-			if runErr != nil {
-				model.Update(tui.OutputMsg{Chunk: runErr.Error()})
-			}
+			resultCh <- runResult{report: report, err: runErr}
 		}()
 
 		prog := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := prog.Run(); err != nil {
 			fmt.Fprintln(stderr, err)
+			return 1
+		}
+
+		result := <-resultCh
+		if result.err != nil {
+			fmt.Fprintln(stderr, result.err)
 			return 1
 		}
 		return 0
@@ -182,7 +192,7 @@ func (noopPullRequestCreator) Create(ctx context.Context, repoDir, title, bodyFi
 	return "PR creation skipped (--no-pr)", nil
 }
 
-func toTeaMsg(msg interface{}) tea.Msg {
+func toTeaMsg(msg pipeline.Event) tea.Msg {
 	switch m := msg.(type) {
 	case pipeline.StateEvent:
 		return tui.StateMsg{State: m.State}

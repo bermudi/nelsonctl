@@ -57,6 +57,9 @@ func TestClientBuildsGitCommands(t *testing.T) {
 	if err := client.CreateBranch(ctx, "change/initial-scaffold"); err != nil {
 		t.Fatalf("CreateBranch() error = %v", err)
 	}
+	if err := client.Checkout(ctx, "change/initial-scaffold"); err != nil {
+		t.Fatalf("Checkout() error = %v", err)
+	}
 	if err := client.Add(ctx, "specs/changes/initial-scaffold/"); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
@@ -71,6 +74,7 @@ func TestClientBuildsGitCommands(t *testing.T) {
 		{dir: "/repo", name: "git", args: []string{"diff", "--quiet"}},
 		{dir: "/repo", name: "git", args: []string{"rev-parse", "--verify", "change/initial-scaffold"}},
 		{dir: "/repo", name: "git", args: []string{"checkout", "-b", "change/initial-scaffold"}},
+		{dir: "/repo", name: "git", args: []string{"checkout", "change/initial-scaffold"}},
 		{dir: "/repo", name: "git", args: []string{"add", "--", "specs/changes/initial-scaffold/"}},
 		{dir: "/repo", name: "git", args: []string{"commit", "-m", "phase 1: Foundation", "-m", "Initialize the scaffold"}},
 		{dir: "/repo", name: "git", args: []string{"push", "-u", "origin", "change/initial-scaffold"}},

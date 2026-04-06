@@ -241,10 +241,9 @@ func mustReadFile(t *testing.T, path string) string {
 
 func TestToTeaMsgBridgesAllEventTypes(t *testing.T) {
 	tests := []struct {
-		name    string
-		event   interface{}
-		want    tea.Msg
-		wantNil bool
+		name  string
+		event pipeline.Event
+		want  tea.Msg
 	}{
 		{
 			name:  "state event",
@@ -276,22 +275,11 @@ func TestToTeaMsgBridgesAllEventTypes(t *testing.T) {
 			event: pipeline.SummaryEvent{PhasesCompleted: 2, PhasesFailed: 1, Duration: "1m30s", Branch: "change/foo"},
 			want:  tui.SummaryMsg{PhasesCompleted: 2, PhasesFailed: 1, Duration: 90 * time.Second, Branch: "change/foo"},
 		},
-		{
-			name:    "unknown event",
-			event:   "not a real event",
-			wantNil: true,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := toTeaMsg(tt.event)
-			if tt.wantNil {
-				if got != nil {
-					t.Fatalf("toTeaMsg() = %T, want nil", got)
-				}
-				return
-			}
 			if got != tt.want {
 				t.Fatalf("toTeaMsg() = %#v, want %#v", got, tt.want)
 			}

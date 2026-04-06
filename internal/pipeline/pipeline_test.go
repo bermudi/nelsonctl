@@ -60,6 +60,11 @@ func (f *fakeGit) CreateBranch(ctx context.Context, branch string) error {
 	return nil
 }
 
+func (f *fakeGit) Checkout(ctx context.Context, branch string) error {
+	f.calls = append(f.calls, "checkout:"+branch)
+	return nil
+}
+
 func (f *fakeGit) Add(ctx context.Context, paths ...string) error {
 	f.calls = append(f.calls, "add:"+strings.Join(paths, ","))
 	return nil
@@ -152,9 +157,9 @@ func TestPipelineRunTransitionsAndRetries(t *testing.T) {
 		"branch:change/initial-scaffold",
 		"add:" + changeDir,
 		"commit:chore: add litespec artifacts for initial-scaffold|Planning artifacts for initial-scaffold\n\nPhase 1: Foundation\nPhase 2: Adapter",
-		"add:" + changeDir,
+		"add:.",
 		"commit:feat(initial-scaffold): complete phase 1 - Foundation|Phase 1: Foundation\n- [x] Task one",
-		"add:" + changeDir,
+		"add:.",
 		"commit:feat(initial-scaffold): complete phase 2 - Adapter|Phase 2: Adapter\n- [x] Task two",
 		"push:origin|change/initial-scaffold|true",
 	}
@@ -246,6 +251,15 @@ func TestPipelineBranchExistsAcceptReuses(t *testing.T) {
 			t.Fatalf("should not create branch when reusing, got call: %s", call)
 		}
 	}
+	var checkedOut bool
+	for _, call := range git.calls {
+		if call == "checkout:change/initial-scaffold" {
+			checkedOut = true
+		}
+	}
+	if !checkedOut {
+		t.Fatal("expected checkout:change/initial-scaffold call when reusing branch")
+	}
 	if !report.FinalReviewPassed {
 		t.Fatal("FinalReviewPassed = false, want true")
 	}
@@ -268,19 +282,18 @@ func TestPipelineMaxRetriesEmitsTaunt(t *testing.T) {
 		{Stdout: "issues found: still broken"},
 		{Stdout: "applied fix again"},
 		{Stdout: "issues found: persistent failure"},
-		{Stdout: "final review: no issues found"},
 	}}
 	git := &fakeGit{}
 	pr := &fakePR{}
 
-	var events []interface{}
+	var events []Event
 	p := &Pipeline{
 		ChangePath:  changeDir,
 		Agent:       fa,
 		Git:         git,
 		PR:          pr,
 		MaxAttempts: 3,
-		OnEvent: func(msg interface{}) {
+		OnEvent: func(msg Event) {
 			events = append(events, msg)
 		},
 	}
@@ -305,6 +318,19 @@ func TestPipelineMaxRetriesEmitsTaunt(t *testing.T) {
 	if !tauntFound {
 		t.Fatal("no TauntEvent emitted after max retries exhausted")
 	}
+
+	// Pipeline should NOT push or create PR when a phase failed.
+	for _, call := range git.calls {
+		if strings.HasPrefix(call, "push:") {
+			t.Fatal("pipeline should not push after phase failure")
+		}
+	}
+	if pr.call != "" {
+		t.Fatal("pipeline should not create PR after phase failure")
+	}
+	if report.FinalReviewPassed {
+		t.Fatal("FinalReviewPassed should be false when phases failed")
+	}
 }
 
 func TestPipelineFinalReviewRetriesOnFailure(t *testing.T) {
@@ -321,6 +347,7 @@ func TestPipelineFinalReviewRetriesOnFailure(t *testing.T) {
 		{Stdout: "applied"},
 		{Stdout: "no issues found"},
 		{Stdout: "issues found: final problems"},
+		{Stdout: "applied fix"},
 		{Stdout: "no issues found"},
 	}}
 	git := &fakeGit{}
@@ -333,6 +360,9 @@ func TestPipelineFinalReviewRetriesOnFailure(t *testing.T) {
 	}
 	if !report.FinalReviewPassed {
 		t.Fatal("FinalReviewPassed = false, want true after retry")
+	}
+	if got, want := len(fa.calls), 5; got != want {
+		t.Fatalf("len(agent.calls) = %d, want %d (apply, review, final-review, fix, final-review)", got, want)
 	}
 }
 
@@ -354,14 +384,14 @@ func TestPipelineEmitsSummaryEvent(t *testing.T) {
 	git := &fakeGit{}
 	pr := &fakePR{}
 
-	var events []interface{}
+	var events []Event
 	p := &Pipeline{
 		ChangePath:  changeDir,
 		Agent:       fa,
 		Git:         git,
 		PR:          pr,
 		MaxAttempts: 3,
-		OnEvent: func(msg interface{}) {
+		OnEvent: func(msg Event) {
 			events = append(events, msg)
 		},
 	}
@@ -404,6 +434,7 @@ func TestReviewPassed(t *testing.T) {
 		{name: "failure output", output: "issues found: fix this", exitCode: 0, want: false},
 		{name: "non-zero exit", output: "anything", exitCode: 1, want: false},
 		{name: "ambiguous pass", output: "looks fine", exitCode: 0, want: true},
+		{name: "mixed negative wins", output: "no issues found but failed", exitCode: 0, want: false},
 	}
 
 	for _, tt := range tests {
@@ -429,6 +460,226 @@ func TestPromptConstruction(t *testing.T) {
 	}
 	if got := FinalReviewPrompt("initial-scaffold"); !strings.Contains(got, "pre-archive mode") {
 		t.Fatalf("FinalReviewPrompt() = %q", got)
+	}
+}
+
+func TestPipelineContextCancellation(t *testing.T) {
+	tmp := t.TempDir()
+	changeDir := filepath.Join(tmp, "cancel-test")
+	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
+		t.Fatalf("write tasks: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	fa := &fakeAgent{}
+	git := &fakeGit{}
+	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, MaxAttempts: 3}
+	_, err := p.Run(ctx)
+	if err == nil {
+		t.Fatal("Run() error = nil, want context canceled error")
+	}
+	if !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("Run() error = %q, want context canceled", err.Error())
+	}
+}
+
+func TestPipelinePhaseFailureStopsSubsequentPhases(t *testing.T) {
+	tmp := t.TempDir()
+	changeDir := filepath.Join(tmp, "stop-test")
+	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n\n## Phase 2: Adapter\n- [ ] Task two\n"); err != nil {
+		t.Fatalf("write tasks: %v", err)
+	}
+	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
+		t.Fatalf("write proposal: %v", err)
+	}
+
+	fa := &fakeAgent{results: []agent.Result{
+		{Stdout: "applied"},
+		{Stdout: "issues found: broken"},
+		{Stdout: "applied fix"},
+		{Stdout: "issues found: still broken"},
+		{Stdout: "applied fix 2"},
+		{Stdout: "issues found: persistent"},
+	}}
+	git := &fakeGit{}
+	pr := &fakePR{}
+
+	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	report, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Only phase 1 should be attempted; phase 2 should not run.
+	if got := len(report.Phases); got != 1 {
+		t.Fatalf("len(Phases) = %d, want 1 (phase 2 should not execute after phase 1 failure)", got)
+	}
+	if report.Phases[0].Passed {
+		t.Fatal("phase 1 should have failed")
+	}
+}
+
+func TestPipelineNoCommitOnFailedPhase(t *testing.T) {
+	tmp := t.TempDir()
+	changeDir := filepath.Join(tmp, "no-commit-test")
+	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
+		t.Fatalf("write tasks: %v", err)
+	}
+	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
+		t.Fatalf("write proposal: %v", err)
+	}
+
+	fa := &fakeAgent{results: []agent.Result{
+		{Stdout: "applied"},
+		{Stdout: "issues found: broken"},
+		{Stdout: "applied fix"},
+		{Stdout: "issues found: still broken"},
+		{Stdout: "applied fix 2"},
+		{Stdout: "issues found: persistent"},
+	}}
+	git := &fakeGit{}
+	pr := &fakePR{}
+
+	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	_, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// The only commit should be the artifacts commit; no phase commit.
+	var commitCount int
+	for _, call := range git.calls {
+		if strings.HasPrefix(call, "commit:feat(") {
+			commitCount++
+		}
+	}
+	if commitCount != 0 {
+		t.Fatalf("expected 0 phase commits on failure, got %d", commitCount)
+	}
+}
+
+func TestReviewPassedStructuredMarkers(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "pass marker", output: "some review text\npass", want: true},
+		{name: "PASS marker", output: "review\nPASS", want: true},
+		{name: "lgtm marker", output: "looks fine\nlgtm", want: true},
+		{name: "approved marker", output: "all good\napproved", want: true},
+		{name: "fail marker", output: "some review text\nfail", want: false},
+		{name: "rejected marker", output: "problems found\nrejected", want: false},
+		{name: "blocked marker", output: "cannot merge\nblocked", want: false},
+		{name: "marker with trailing whitespace", output: "review\n  pass  \n", want: true},
+		{name: "marker overrides heuristic", output: "issues found: something\npass", want: true},
+		{name: "fail marker overrides ambiguous", output: "looks fine\nfail", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ReviewPassed(tt.output, 0); got != tt.want {
+				t.Fatalf("ReviewPassed(%q, 0) = %v, want %v", tt.output, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReviewPassedNegativePhrasesCheckedFirst(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "failed overrides no issues found", output: "no issues found but build failed", want: false},
+		{name: "blocking overrides no issues found", output: "no issues found but blocking concern", want: false},
+		{name: "needs work overrides no issues found", output: "no issues found but needs work", want: false},
+		{name: "failure overrides no issues found", output: "no issues found, failure detected", want: false},
+		{name: "issues found without no prefix is failure", output: "issues found: broken things", want: false},
+		{name: "no issues found alone is pass", output: "no issues found", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ReviewPassed(tt.output, 0); got != tt.want {
+				t.Fatalf("ReviewPassed(%q, 0) = %v, want %v", tt.output, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPipelineFinalReviewFailureBlocksPushAndPR(t *testing.T) {
+	tmp := t.TempDir()
+	changeDir := filepath.Join(tmp, "final-block-test")
+	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
+		t.Fatalf("write tasks: %v", err)
+	}
+	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
+		t.Fatalf("write proposal: %v", err)
+	}
+
+	fa := &fakeAgent{results: []agent.Result{
+		{Stdout: "applied"},
+		{Stdout: "no issues found"},
+		{Stdout: "issues found: final problems"},
+		{Stdout: "applied fix"},
+		{Stdout: "issues found: still broken"},
+		{Stdout: "applied fix again"},
+		{Stdout: "issues found: persistent failure"},
+	}}
+	git := &fakeGit{}
+	pr := &fakePR{}
+
+	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	report, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if report.FinalReviewPassed {
+		t.Fatal("FinalReviewPassed = true, want false after all final review attempts fail")
+	}
+	for _, call := range git.calls {
+		if strings.HasPrefix(call, "push:") {
+			t.Fatal("pipeline should not push when final review fails")
+		}
+	}
+	if pr.call != "" {
+		t.Fatal("pipeline should not create PR when final review fails")
+	}
+}
+
+func TestPipelineApplyNonZeroExitCodeTreatedAsFailure(t *testing.T) {
+	tmp := t.TempDir()
+	changeDir := filepath.Join(tmp, "exit-code-test")
+	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
+		t.Fatalf("write tasks: %v", err)
+	}
+	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
+		t.Fatalf("write proposal: %v", err)
+	}
+
+	fa := &fakeAgent{results: []agent.Result{
+		{Stdout: "applied with errors", ExitCode: 1},
+		{Stdout: "applied fix"},
+		{Stdout: "no issues found"},
+		{Stdout: "final review: no issues found"},
+	}}
+	git := &fakeGit{}
+	pr := &fakePR{}
+
+	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	report, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !report.Phases[0].Passed {
+		t.Fatal("phase should pass after fix despite initial non-zero exit code")
+	}
+	if got, want := report.Phases[0].Attempts, 2; got != want {
+		t.Fatalf("Attempts = %d, want %d (apply fail + fix+review pass)", got, want)
+	}
+	if !report.FinalReviewPassed {
+		t.Fatal("FinalReviewPassed = false, want true")
 	}
 }
 
