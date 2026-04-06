@@ -41,6 +41,7 @@ type adapter struct {
 	name             string
 	binary           string
 	buildArgs        func(prompt string) []string
+	format           string
 	timeout          time.Duration
 	terminationGrace time.Duration
 	stdoutCallback   StreamCallback
@@ -71,6 +72,13 @@ func WithStdoutCallback(callback StreamCallback) Option {
 func WithTerminationGracePeriod(grace time.Duration) Option {
 	return func(a *adapter) {
 		a.terminationGrace = grace
+	}
+}
+
+// WithFormat sets the output format for agents that support it (e.g. "json", "default").
+func WithFormat(format string) Option {
+	return func(a *adapter) {
+		a.format = format
 	}
 }
 
