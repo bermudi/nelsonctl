@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -46,9 +48,7 @@ func runCLI(ctx context.Context, args []string, cwd string, stdout, stderr io.Wr
 
 	agentOptions := []agent.Option{agent.WithTimeout(opts.timeout)}
 	if opts.verbose {
-		agentOptions = append(agentOptions, agent.WithStdoutCallback(func(chunk []byte) {
-			_, _ = stdout.Write(chunk)
-		}))
+		agentOptions = append(agentOptions, agent.WithStdoutCallback(newVerboseCallback(stdout)))
 	}
 
 	agentClient, err := agent.New(opts.agentName, agentOptions...)
@@ -214,4 +214,61 @@ func toTeaMsg(msg pipeline.Event) tea.Msg {
 func parseDuration(s string) time.Duration {
 	d, _ := time.ParseDuration(s)
 	return d
+}
+
+func newVerboseCallback(stdout io.Writer) agent.StreamCallback {
+	var buf []byte
+	return func(chunk []byte) {
+		buf = append(buf, chunk...)
+		for {
+			idx := bytes.IndexByte(buf, '\n')
+			if idx < 0 {
+				break
+			}
+			line := buf[:idx]
+			buf = buf[idx+1:]
+			printJSONLine(stdout, line)
+		}
+	}
+}
+
+func printJSONLine(stdout io.Writer, line []byte) {
+	if len(line) == 0 {
+		return
+	}
+	var evt struct {
+		Type string `json:"type"`
+		Part struct {
+			Text  string `json:"text"`
+			Tool  string `json:"tool"`
+			Title string `json:"title"`
+			State struct {
+				Status string `json:"status"`
+				Input  struct {
+					Command string `json:"command"`
+				} `json:"input"`
+			} `json:"state"`
+		} `json:"part"`
+	}
+	if json.Unmarshal(line, &evt) != nil {
+		stdout.Write(line)
+		stdout.Write([]byte{'\n'})
+		return
+	}
+	switch evt.Type {
+	case "text":
+		if evt.Part.Text != "" {
+			fmt.Fprintln(stdout, evt.Part.Text)
+		}
+	case "tool_use":
+		if evt.Part.State.Status == "completed" {
+			label := evt.Part.Title
+			if label == "" && evt.Part.Tool == "bash" {
+				label = evt.Part.State.Input.Command
+			}
+			if label != "" {
+				fmt.Fprintf(stdout, "  > %s: %s\n", evt.Part.Tool, label)
+			}
+		}
+	}
 }
