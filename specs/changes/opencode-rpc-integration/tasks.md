@@ -11,7 +11,7 @@
 - [ ] Write `internal/agent/ocsse_test.go` — tests for SSE parsing, event coalescing, render tick batching, and goroutine safety.
 
 ## Phase 2: RPC Adapter
-- [ ] Implement `internal/agent/opencode-rpc.go` — the opencode RPC adapter that implements both `Agent` (from pi-rpc's `internal/agent/rpc.go`) and `RPCAgent`. Creates one implementation session for apply/fix, disposable review sessions, maps pipeline steps to server API calls, extracts response text from message parts into `Result.Stdout`, and auto-approves all permission requests (file edits, bash commands, and all other tool calls without restriction). Supports `OpenCode RPC Adapter`, `Persistent Implementation Session`, `Disposable Review Sessions`, `Per-Step Model Selection`, and `Permission Auto-Approval`.
+- [ ] Implement `internal/agent/opencode-rpc.go` — the opencode RPC adapter that implements both `Agent` (from pi-rpc's `internal/agent/adapter.go`) and `RPCAgent`. Creates one implementation session for apply/fix, disposable review sessions, maps pipeline steps to server API calls, extracts response text from message parts into `Result.Stdout`, and auto-approves all permission requests (file edits, bash commands, and all other tool calls without restriction). Supports `OpenCode RPC Adapter`, `Persistent Implementation Session`, `Disposable Review Sessions`, `Per-Step Model Selection`, and `Permission Auto-Approval`.
 - [ ] Register `opencode-rpc` as a distinct agent name in the agent resolution system (established by pi-rpc-integration), so `--agent opencode-rpc` selects the RPC adapter. The existing `opencode` agent name continues to use CLI shell-out. Supports `OpenCode Prerequisite Check`.
 
 ## Phase 3: Crash Recovery

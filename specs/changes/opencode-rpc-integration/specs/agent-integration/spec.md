@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: OpenCode RPC Adapter
-The system SHALL include an opencode RPC adapter in `internal/agent/opencode-rpc.go` that implements the `Agent` and `RPCAgent` interfaces defined by `pi-rpc-integration` in `internal/agent/rpc.go`. The adapter exposes session creation, model switching, server startup/shutdown, and SSE streaming through the shared `RPCAgent` contract.
+The system SHALL include an opencode RPC adapter in `internal/agent/opencode-rpc.go` that implements the `Agent` and `RPCAgent` interfaces defined by `pi-rpc-integration` in `internal/agent/adapter.go`. The adapter exposes session creation, model switching, server startup/shutdown, and SSE streaming through the shared `RPCAgent` contract.
 
 #### Scenario: Adapter selected via agent name
 - **WHEN** nelsonctl resolves `opencode-rpc` as the execution agent via `--agent opencode-rpc`
