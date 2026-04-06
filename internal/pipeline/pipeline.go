@@ -69,6 +69,7 @@ type EventHandler func(msg Event)
 // Pipeline coordinates apply/review/fix across a change directory.
 type Pipeline struct {
 	ChangePath  string
+	RepoDir     string
 	Agent       agent.Agent
 	Git         GitOps
 	PR          PullRequestCreator
@@ -80,8 +81,8 @@ type Pipeline struct {
 }
 
 // New creates a pipeline with sensible defaults.
-func New(changePath string, a agent.Agent, git GitOps) *Pipeline {
-	return &Pipeline{ChangePath: changePath, Agent: a, Git: git, MaxAttempts: 3}
+func New(changePath, repoDir string, a agent.Agent, git GitOps) *Pipeline {
+	return &Pipeline{ChangePath: changePath, RepoDir: repoDir, Agent: a, Git: git, MaxAttempts: 3}
 }
 
 // Run executes the phase workflow for the configured change directory.
@@ -169,7 +170,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 		emitState(StateFinalReview)
 		p.waitIfPaused(ctx)
 		for attempt := 1; attempt <= p.MaxAttempts; attempt++ {
-			reviewRes, reviewErr := p.Agent.Run(ctx, FinalReviewPrompt(changeName), p.ChangePath)
+			reviewRes, reviewErr := p.Agent.Run(ctx, FinalReviewPrompt(changeName), p.RepoDir)
 			reviewOutput := ReviewOutput(resultText(reviewRes), errorText(reviewErr))
 			reviewExit := resultExitCode(reviewRes, reviewErr)
 			report.FinalReviewOutput = reviewOutput
@@ -179,7 +180,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 				break
 			}
 			if attempt < p.MaxAttempts {
-				fixRes, fixErr := p.Agent.Run(ctx, FixPrompt(reviewOutput), p.ChangePath)
+				fixRes, fixErr := p.Agent.Run(ctx, FixPrompt(reviewOutput), p.RepoDir)
 				if fixRes != nil && fixRes.Stdout != "" {
 					p.emit(OutputEvent{Chunk: fixRes.Stdout})
 				}
@@ -224,7 +225,7 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 		report.Attempts = attempt
 		p.emit(PhaseStartEvent{Number: phase.Number, Name: phase.Name, Attempt: attempt})
 
-		applyRes, applyErr := p.Agent.Run(ctx, prompt, p.ChangePath)
+		applyRes, applyErr := p.Agent.Run(ctx, prompt, p.RepoDir)
 		if applyRes != nil && applyRes.Stdout != "" {
 			p.emit(OutputEvent{Chunk: applyRes.Stdout})
 		}
@@ -238,7 +239,7 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 			continue
 		}
 
-		reviewRes, reviewErr := p.Agent.Run(ctx, ReviewPrompt(changeName), p.ChangePath)
+		reviewRes, reviewErr := p.Agent.Run(ctx, ReviewPrompt(changeName), p.RepoDir)
 		reviewOutput := ReviewOutput(resultText(reviewRes), errorText(reviewErr))
 		report.ReviewOutput = reviewOutput
 		passed := ReviewPassed(reviewOutput, resultExitCode(reviewRes, reviewErr))

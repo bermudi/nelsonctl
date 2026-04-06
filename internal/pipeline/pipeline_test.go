@@ -112,7 +112,7 @@ func TestPipelineRunTransitionsAndRetries(t *testing.T) {
 	git := &fakeGit{}
 	pr := &fakePR{note: "gh unavailable; manual instructions"}
 
-	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
 	report, err := p.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -183,7 +183,7 @@ func TestPipelineDirtyWorktreeAborts(t *testing.T) {
 	}
 
 	git := &fakeGit{cleanErr: fmt.Errorf("dirty worktree")}
-	p := &Pipeline{ChangePath: changeDir, Agent: &fakeAgent{}, Git: git, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: &fakeAgent{}, Git: git, MaxAttempts: 3}
 	_, err := p.Run(context.Background())
 	if err == nil {
 		t.Fatal("Run() error = nil, want error for dirty worktree")
@@ -203,6 +203,7 @@ func TestPipelineBranchExistsDeclineAborts(t *testing.T) {
 	git := &fakeGit{branchExist: true}
 	p := &Pipeline{
 		ChangePath:  changeDir,
+		RepoDir:     changeDir,
 		Agent:       &fakeAgent{},
 		Git:         git,
 		MaxAttempts: 3,
@@ -236,6 +237,7 @@ func TestPipelineBranchExistsAcceptReuses(t *testing.T) {
 	}}
 	p := &Pipeline{
 		ChangePath:  changeDir,
+		RepoDir:     changeDir,
 		Agent:       fa,
 		Git:         git,
 		PR:          pr,
@@ -289,6 +291,7 @@ func TestPipelineMaxRetriesEmitsTaunt(t *testing.T) {
 	var events []Event
 	p := &Pipeline{
 		ChangePath:  changeDir,
+		RepoDir:     changeDir,
 		Agent:       fa,
 		Git:         git,
 		PR:          pr,
@@ -353,7 +356,7 @@ func TestPipelineFinalReviewRetriesOnFailure(t *testing.T) {
 	git := &fakeGit{}
 	pr := &fakePR{}
 
-	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
 	report, err := p.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -387,6 +390,7 @@ func TestPipelineEmitsSummaryEvent(t *testing.T) {
 	var events []Event
 	p := &Pipeline{
 		ChangePath:  changeDir,
+		RepoDir:     changeDir,
 		Agent:       fa,
 		Git:         git,
 		PR:          pr,
@@ -475,7 +479,7 @@ func TestPipelineContextCancellation(t *testing.T) {
 
 	fa := &fakeAgent{}
 	git := &fakeGit{}
-	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, MaxAttempts: 3}
 	_, err := p.Run(ctx)
 	if err == nil {
 		t.Fatal("Run() error = nil, want context canceled error")
@@ -506,7 +510,7 @@ func TestPipelinePhaseFailureStopsSubsequentPhases(t *testing.T) {
 	git := &fakeGit{}
 	pr := &fakePR{}
 
-	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
 	report, err := p.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -542,7 +546,7 @@ func TestPipelineNoCommitOnFailedPhase(t *testing.T) {
 	git := &fakeGit{}
 	pr := &fakePR{}
 
-	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
 	_, err := p.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -630,7 +634,7 @@ func TestPipelineFinalReviewFailureBlocksPushAndPR(t *testing.T) {
 	git := &fakeGit{}
 	pr := &fakePR{}
 
-	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
 	report, err := p.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -667,7 +671,7 @@ func TestPipelineApplyNonZeroExitCodeTreatedAsFailure(t *testing.T) {
 	git := &fakeGit{}
 	pr := &fakePR{}
 
-	p := &Pipeline{ChangePath: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
 	report, err := p.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)

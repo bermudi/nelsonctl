@@ -62,7 +62,7 @@ func runCLI(ctx context.Context, args []string, cwd string, stdout, stderr io.Wr
 	}
 
 	gitClient := git.NewClient(cwd)
-	p := pipeline.New(absChangePath, agentClient, gitClient)
+	p := pipeline.New(absChangePath, cwd, agentClient, gitClient)
 
 	if !opts.noPR {
 		p.PR = pipeline.NewGHClient()
