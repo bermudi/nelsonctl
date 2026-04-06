@@ -5,20 +5,20 @@ import (
 	"strings"
 )
 
-// ApplyPrompt constructs the litespec-apply prompt for a phase.
+// ApplyPrompt constructs the apply prompt for a phase.
 func ApplyPrompt(changeName string, phase Phase) string {
 	return fmt.Sprintf(
-		"Use your litespec-apply skill to implement phase %d of change %s. The tasks for this phase are:%s",
+		"Implement phase %d of change %s. The tasks for this phase are:%s",
 		phase.Number,
 		changeName,
 		phaseTaskLines(phase.Tasks),
 	)
 }
 
-// ReviewPrompt constructs the litespec-review prompt for a change.
+// ReviewPrompt constructs the review prompt for a change.
 func ReviewPrompt(changeName string) string {
 	return fmt.Sprintf(
-		"Use your litespec-review skill to review the implementation of change %s.",
+		"Review the implementation of change %s. Report whether it is complete and correct, or list specific issues.",
 		changeName,
 	)
 }
@@ -34,7 +34,7 @@ func FixPrompt(reviewOutput string) string {
 // FinalReviewPrompt constructs the final pre-archive review prompt.
 func FinalReviewPrompt(changeName string) string {
 	return fmt.Sprintf(
-		"Use your litespec-review skill in pre-archive mode to review the implementation of change %s.",
+		"Do a final review of the full implementation of change %s. Confirm everything is complete and ready to archive, or list remaining issues.",
 		changeName,
 	)
 }

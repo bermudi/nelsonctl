@@ -58,13 +58,13 @@ while [ $# -gt 0 ]; do
 done
 printf '%s\n' "$prompt" >> "$MOCK_AGENT_LOG"
 case "$prompt" in
-  *"pre-archive mode"*)
+  *"final review"*)
     echo "final review: no issues found"
     ;;
   *"The review found these issues:"*)
     echo "fixed after review"
     ;;
-  *"litespec-review skill"*)
+  *"Review the implementation"*)
     echo "no issues found"
     ;;
   *)
@@ -73,8 +73,9 @@ case "$prompt" in
 esac
 `)
 	mustWriteScript(t, filepath.Join(binDir, "git"), `#!/bin/sh
-case "$1" in
-  rev-parse) exit 1 ;;
+case "$*" in
+  "rev-parse --verify "*) exit 1 ;;
+  "diff --cached --quiet") exit 1 ;;
 esac
 echo "git $*" >> "$MOCK_GIT_LOG"
 `)
@@ -110,7 +111,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	}
 
 	agentLogData := mustReadFile(t, agentLog)
-	for _, want := range []string{"litespec-apply skill", "litespec-review skill", "pre-archive mode"} {
+	for _, want := range []string{"Implement phase 1", "Review the implementation", "final review"} {
 		if !strings.Contains(agentLogData, want) {
 			t.Fatalf("agent log missing %q in %q", want, agentLogData)
 		}
@@ -119,7 +120,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	gitLogData := mustReadFile(t, gitLog)
 	for _, want := range []string{
 		"git checkout -b change/initial-scaffold",
-		"git add --",
+		"git add --all",
 		"git commit -m chore: add litespec artifacts for initial-scaffold",
 		"git push -u origin change/initial-scaffold",
 	} {
@@ -187,8 +188,9 @@ func TestRunCLINoPRSkipsPRCreation(t *testing.T) {
 echo "ok"
 `)
 	mustWriteScript(t, filepath.Join(binDir, "git"), `#!/bin/sh
-case "$1" in
-  rev-parse) exit 1 ;;
+case "$*" in
+  "rev-parse --verify "*) exit 1 ;;
+  "diff --cached --quiet") exit 1 ;;
 esac
 echo "git $*" >> "$MOCK_GIT_LOG"
 `)

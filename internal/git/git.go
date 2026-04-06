@@ -94,11 +94,19 @@ func (c *Client) AddAll(ctx context.Context) error {
 
 // Commit creates a commit with subject and optional body.
 func (c *Client) Commit(ctx context.Context, subject, body string) error {
+	if !c.hasStagedChanges(ctx) {
+		return nil
+	}
 	args := []string{"commit", "-m", subject}
 	if body != "" {
 		args = append(args, "-m", body)
 	}
 	return c.executor().Run(ctx, c.Dir, "git", args...)
+}
+
+func (c *Client) hasStagedChanges(ctx context.Context) bool {
+	err := c.executor().Run(ctx, c.Dir, "git", "diff", "--cached", "--quiet")
+	return err != nil
 }
 
 // Push pushes the given branch to a remote.

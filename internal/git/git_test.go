@@ -39,6 +39,7 @@ func TestClientBuildsGitCommands(t *testing.T) {
 	fake := &fakeExecutor{
 		byArg: map[string]error{
 			"rev-parse --verify change/initial-scaffold": errors.New("not found"),
+			"diff --cached --quiet":                      errors.New("has staged changes"),
 		},
 	}
 	client := &Client{Dir: "/repo", Exec: fake}
@@ -76,6 +77,7 @@ func TestClientBuildsGitCommands(t *testing.T) {
 		{dir: "/repo", name: "git", args: []string{"checkout", "-b", "change/initial-scaffold"}},
 		{dir: "/repo", name: "git", args: []string{"checkout", "change/initial-scaffold"}},
 		{dir: "/repo", name: "git", args: []string{"add", "--", "specs/changes/initial-scaffold/"}},
+		{dir: "/repo", name: "git", args: []string{"diff", "--cached", "--quiet"}},
 		{dir: "/repo", name: "git", args: []string{"commit", "-m", "phase 1: Foundation", "-m", "Initialize the scaffold"}},
 		{dir: "/repo", name: "git", args: []string{"push", "-u", "origin", "change/initial-scaffold"}},
 	}
