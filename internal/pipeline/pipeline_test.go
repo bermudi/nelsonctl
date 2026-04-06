@@ -70,6 +70,11 @@ func (f *fakeGit) Add(ctx context.Context, paths ...string) error {
 	return nil
 }
 
+func (f *fakeGit) AddAll(ctx context.Context) error {
+	f.calls = append(f.calls, "add-all")
+	return nil
+}
+
 func (f *fakeGit) Commit(ctx context.Context, subject, body string) error {
 	f.calls = append(f.calls, "commit:"+subject+"|"+body)
 	return nil
@@ -155,11 +160,11 @@ func TestPipelineRunTransitionsAndRetries(t *testing.T) {
 		"is-clean",
 		"branch-exists:change/initial-scaffold",
 		"branch:change/initial-scaffold",
-		"add:" + changeDir,
+		"add-all",
 		"commit:chore: add litespec artifacts for initial-scaffold|Planning artifacts for initial-scaffold\n\nPhase 1: Foundation\nPhase 2: Adapter",
-		"add:.",
+		"add-all",
 		"commit:feat(initial-scaffold): complete phase 1 - Foundation|Phase 1: Foundation\n- [x] Task one",
-		"add:.",
+		"add-all",
 		"commit:feat(initial-scaffold): complete phase 2 - Adapter|Phase 2: Adapter\n- [x] Task two",
 		"push:origin|change/initial-scaffold|true",
 	}

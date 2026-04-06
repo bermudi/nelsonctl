@@ -16,7 +16,7 @@ type GitOps interface {
 	BranchExists(ctx context.Context, branch string) (bool, error)
 	CreateBranch(ctx context.Context, branch string) error
 	Checkout(ctx context.Context, branch string) error
-	Add(ctx context.Context, paths ...string) error
+	AddAll(ctx context.Context) error
 	Commit(ctx context.Context, subject, body string) error
 	Push(ctx context.Context, remote, branch string, setUpstream bool) error
 }
@@ -269,7 +269,7 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 }
 
 func (p *Pipeline) commitArtifacts(ctx context.Context, changeName string, phases []Phase) error {
-	if err := p.Git.Add(ctx, p.ChangePath); err != nil {
+	if err := p.Git.AddAll(ctx); err != nil {
 		return err
 	}
 	body := fmt.Sprintf("Planning artifacts for %s\n\n%s", changeName, phaseSummary(phases))
@@ -277,7 +277,7 @@ func (p *Pipeline) commitArtifacts(ctx context.Context, changeName string, phase
 }
 
 func (p *Pipeline) commitPhase(ctx context.Context, changeName string, phase Phase) error {
-	if err := p.Git.Add(ctx, "."); err != nil {
+	if err := p.Git.AddAll(ctx); err != nil {
 		return err
 	}
 	subject := fmt.Sprintf("feat(%s): complete phase %d - %s", changeName, phase.Number, phase.Name)

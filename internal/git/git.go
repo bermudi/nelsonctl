@@ -87,6 +87,11 @@ func (c *Client) Add(ctx context.Context, paths ...string) error {
 	return c.executor().Run(ctx, c.Dir, "git", args...)
 }
 
+// AddAll stages all changes (including untracked files).
+func (c *Client) AddAll(ctx context.Context) error {
+	return c.executor().Run(ctx, c.Dir, "git", "add", "--all")
+}
+
 // Commit creates a commit with subject and optional body.
 func (c *Client) Commit(ctx context.Context, subject, body string) error {
 	args := []string{"commit", "-m", subject}
