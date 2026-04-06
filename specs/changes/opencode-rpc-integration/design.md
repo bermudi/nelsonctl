@@ -12,7 +12,7 @@ The adapter lives in a new layer between the pipeline and the opencode HTTP serv
 
 2. **HTTP client** (`internal/agent/occlient.go`) — typed Go client for the opencode server API. Covers session CRUD, message sending, abort, permission approval, and health checks. No code generation; hand-written against the server docs to keep the dependency footprint at zero.
 
-3. **SSE consumer** (`internal/agent/ocsse.go`) — reads `GET /global/event`, parses SSE frames into typed Go events, and fans them out to the TUI via the existing `EventHandler` callback. Coalesces bursty text deltas onto a configurable render tick.
+3. **SSE consumer** (`internal/agent/ocsse.go`) — reads `GET /global/event`, parses SSE frames into typed Go events, and fans them out via the `Events() <-chan Event` channel defined by the `RPCAgent` interface (pi-rpc-integration). The Pi adapter consumes JSONL events over stdio while the opencode adapter consumes SSE over HTTP; both forward to the same shared channel. Coalesces bursty text deltas onto a configurable render tick (default: 50ms, config key: `opencode.event_coalesce_ms`).
 
 4. **RPC adapter** (`internal/agent/opencode-rpc.go`) — implements the `Agent` and `RPCAgent` interfaces (defined by pi-rpc-integration in `internal/agent/adapter.go`). Creates one implementation session for the apply-fix loop and disposable review sessions for each review pass. Maps pipeline steps to server API calls and extracts `Result.Stdout` from response parts.
 
@@ -26,7 +26,7 @@ The HTTP server API was chosen because it is the most complete opencode integrat
 
 ### Managed server lifecycle
 
-nelsonctl owns the server process. Starting `opencode serve --port 0` gives a dynamically assigned port that the adapter discovers via health probe. This avoids port conflicts and mirrors the TS SDK's `createOpencode()` pattern. An external URL option is provided via pi-rpc-integration's configuration system (`opencode_server_url` in config.yaml) for users who already run `opencode serve` or `opencode web`. When an external URL is configured, the adapter skips process startup and defers shutdown to the external owner.
+nelsonctl owns the server process. Starting `opencode serve --port 0` gives a dynamically assigned port that the adapter discovers via health probe. This avoids port conflicts and mirrors the TS SDK's `createOpencode()` pattern. An external URL option is provided via the `OPENCODE_SERVER_URL` environment variable (or `opencode.server_url` in config.yaml) for users who already run `opencode serve` or `opencode web`. When an external URL is configured, the adapter skips process startup and defers shutdown to the external owner. The server subcommand can be overridden via `OPENCODE_SERVER_COMMAND` (default: `serve`, set to `web` for browser-based debugging).
 
 ### Hand-written HTTP client
 
@@ -34,7 +34,11 @@ No OpenAPI code generation in this change. The server API surface needed for the
 
 ### Synchronous messages, streaming via SSE
 
-`POST /session/:id/message` blocks until the assistant finishes, which simplifies the pipeline's step loop. The SSE stream (`GET /global/event`) provides real-time output for the TUI while the message call is in flight. The SSE consumer runs on a **separate goroutine** from the blocking message call, so streaming events are forwarded to the TUI via the `EventHandler` callback without blocking the pipeline's step loop. This avoids the complexity of async message + polling for completion.
+`POST /session/:id/message` blocks until the assistant finishes, which simplifies the pipeline's step loop. The SSE stream (`GET /global/event`) provides real-time output for the TUI while the message call is in flight. The SSE consumer runs on a **separate goroutine** from the blocking message call, so streaming events are forwarded to the TUI via the `Events()` channel without blocking the pipeline's step loop. This avoids the complexity of async message + polling for completion.
+
+### OpenCode version requirement
+
+This adapter targets opencode's HTTP server API. Requires opencode with HTTP server support (`opencode serve` subcommand). The hand-written client covers the endpoints documented in opencode's server API as of the current release.
 
 ### Separate sessions for apply and review
 

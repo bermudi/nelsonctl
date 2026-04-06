@@ -22,16 +22,27 @@ The opencode RPC adapter SHALL start `opencode serve` as a managed child process
 - **THEN** the adapter calls `POST /instance/dispose` and terminates the server process with a grace period before SIGKILL
 
 ### Requirement: Server Reuse
-The adapter SHALL support connecting to an already-running opencode server by accepting a base URL via the configuration system established by `pi-rpc-integration` (`opencode_server_url` in `config.yaml`), skipping process startup and health check, and deferring shutdown to the external owner.
+The adapter SHALL support connecting to an already-running opencode server by accepting a base URL via the `OPENCODE_SERVER_URL` environment variable (takes precedence) or the `opencode.server_url` key in pi-rpc-integration's `config.yaml`. When an external URL is provided, the adapter skips process startup and defers shutdown to the external owner.
 
 #### Scenario: External server configured
-- **WHEN** `opencode_server_url` is set in the pi-rpc configuration
+- **WHEN** `OPENCODE_SERVER_URL` is set or `opencode.server_url` is present in `config.yaml`
 - **THEN** nelsonctl connects to that server without starting a new process and does not shut it down on exit
 
 #### Scenario: No external server configured
-- **WHEN** `opencode_server_url` is not set in the configuration
+- **WHEN** neither `OPENCODE_SERVER_URL` nor `opencode.server_url` is set
 - **THEN** nelsonctl starts and manages its own server process
 
+#### Scenario: Pipeline abort with external server
+- **WHEN** the pipeline aborts while connected to an externally managed server
+- **THEN** the adapter closes the SSE connection and releases HTTP client resources but does NOT call `POST /instance/dispose` or terminate the server process
+
+### Requirement: Server Command Override
+The adapter SHALL support overriding the server subcommand via the `OPENCODE_SERVER_COMMAND` environment variable. When set to `web`, the adapter launches `opencode web` instead of `opencode serve`, which starts the same HTTP server with an additional browser-based interface for debugging. The default command is `serve`.
+
 #### Scenario: Server command override for debugging
-- **WHEN** the operator wants visual debugging via a browser
-- **THEN** the server manager can be configured to use `opencode web` instead of `opencode serve`, which starts the same HTTP server with an additional web interface
+- **WHEN** `OPENCODE_SERVER_COMMAND=web` is set in the environment
+- **THEN** the server manager launches `opencode web --port 0` instead of `opencode serve --port 0`
+
+#### Scenario: Default server command
+- **WHEN** `OPENCODE_SERVER_COMMAND` is not set
+- **THEN** the server manager launches `opencode serve --port 0`

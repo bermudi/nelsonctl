@@ -27,5 +27,5 @@ This change depends on `pi-rpc-integration` and MUST be applied after it. The pi
 - Not using the ACP protocol or the TypeScript SDK. This change targets the HTTP server API exclusively.
 - Not adding configuration, init wizard, or review intelligence changes. Those belong to `pi-rpc-integration`.
 - Not changing the pipeline's phase progression, branch setup, or git operations. The pipeline's smart-path routing (checking `AsRPC()` in `runPhase`) is owned by `pi-rpc-integration`; this change only implements the opencode side of that routing.
-- Not adding new TUI panels or controls beyond streaming events through pi-rpc's visibility layer.
-- Not implementing structured output or slash command execution through the server API in this change. Those are optimizations for later.
+- Not adding new TUI panels or controls. SSE events flow through pi-rpc-integration's existing `Events()` channel and visibility layer; no new TUI surfaces are introduced.
+- Not implementing structured output or slash command execution through the server API in this change. Future support would extend `occlient.go` with the `/execute` endpoint. Those are optimizations for later.

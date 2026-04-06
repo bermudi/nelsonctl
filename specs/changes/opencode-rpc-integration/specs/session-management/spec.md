@@ -29,7 +29,7 @@ The adapter SHALL accept a model selection for each pipeline step and pass it as
 
 #### Scenario: Review uses a different model
 - **WHEN** a separate review model is configured
-- **THEN** the adapter passes `{ providerID, modelID }` matching the review model on review prompts and the apply/fix model on implementation prompts
+- **THEN** the adapter passes the model selection on each message call matching the review model on review prompts and the apply/fix model on implementation prompts. The message request body includes the model as `{"model": {"provider": "<providerID>", "model": "<modelID>"}}` alongside the prompt.
 
 #### Scenario: No model override
 - **WHEN** no per-step model is configured
@@ -51,4 +51,4 @@ The adapter SHALL respond to opencode permission requests by auto-approving them
 
 #### Scenario: Tool permission requested
 - **WHEN** opencode emits a permission request event during a pipeline step
-- **THEN** the adapter responds with approval and emits an output event to the TUI showing what was approved
+- **THEN** the adapter responds with approval and emits an `Event{Type: TextEvent, Content: "[approved] <tool_name>"}` to the `Events()` channel for TUI visibility

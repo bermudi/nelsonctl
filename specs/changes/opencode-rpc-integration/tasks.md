@@ -3,7 +3,7 @@
 **Prerequisite**: `pi-rpc-integration` must be applied first. This change assumes the `RPCAgent` interface, configuration system, pipeline smart-path routing, and agent resolution are already in place.
 
 ## Phase 1: HTTP Client and Server Process
-- [ ] Implement `internal/agent/occlient.go` — typed HTTP client for `GET /global/health`, `POST /session`, `GET /session/:id`, `DELETE /session/:id`, `POST /session/:id/message`, `POST /session/:id/abort`, `POST /session/:id/permissions/:permissionID`, `POST /instance/dispose`, `GET /config/providers`. Request/response structs, error handling, optional basic auth. Supports all session management and message sending requirements.
+- [ ] Implement `internal/agent/occlient.go` — typed HTTP client for `GET /global/health`, `POST /session`, `GET /session/:id`, `DELETE /session/:id`, `POST /session/:id/message`, `POST /session/:id/abort`, `POST /session/:id/permissions/:permissionID`, `POST /instance/dispose`. Request/response structs, error handling, optional basic auth. Supports all session management and message sending requirements.
 - [ ] Implement `internal/agent/ocserver.go` — start `opencode serve --port 0` as a child process (or `opencode web` for development), probe `GET /global/health` with backoff until healthy, capture the assigned port, and shut down via `POST /instance/dispose` + process termination with grace period. Supports `Managed Server Process`.
 - [ ] Implement `internal/agent/ocsse.go` — SSE client that reads `GET /global/event`, parses event frames, coalesces text deltas onto a configurable render tick, and forwards typed events to a callback. Runs on a separate goroutine from blocking message calls. Supports `SSE Event Consumption` and `Event Coalescing`.
 - [ ] Write `internal/agent/occlient_test.go` — tests for the HTTP client covering health check, session CRUD, message round-trip, abort, and permission approval using a mock HTTP server.
@@ -20,3 +20,4 @@
 ## Phase 4: Tests and Verification
 - [ ] Write `internal/agent/opencode-rpc_test.go` — integration tests with a mock HTTP server covering session lifecycle, apply/fix session reuse, review session isolation, model switching, abort, permission auto-approval, and crash recovery.
 - [ ] Run existing test suite to verify CLI adapters are unaffected by the adapter registration.
+- [ ] Verify that `opencode-rpc` implements the exact `Agent` and `RPCAgent` interface signatures defined in pi-rpc-integration's agent-adapter spec, including all method signatures, return types, and error behavior.
