@@ -24,12 +24,35 @@ The system SHALL commit all files under the change's `specs/changes/<name>/` dir
 - **WHEN** the branch is created and artifacts exist
 - **THEN** the system stages only the change directory contents and commits
 
+#### Scenario: No artifacts to commit
+- **WHEN** the artifacts are already committed (nothing new to stage)
+- **THEN** the system skips the commit without error
+
+### Requirement: Prompt Construction
+The system SHALL construct prompts that are self-contained and do not reference external skills.
+
+#### Scenario: Apply prompt
+- **WHEN** executing a phase
+- **THEN** the system sends "Implement phase N of change <name>. The tasks for this phase are: <tasks>"
+
+#### Scenario: Review prompt
+- **WHEN** reviewing implementation
+- **THEN** the system sends "Review the implementation of change <name>. Report whether it is complete and correct, or list specific issues."
+
+#### Scenario: Fix prompt
+- **WHEN** review finds issues
+- **THEN** the system sends "The review found these issues: <issues>. Fix them."
+
+#### Scenario: Final review prompt
+- **WHEN** running final review
+- **THEN** the system sends "Do a final review of the full implementation of change <name>. Confirm everything is complete and ready to archive, or list remaining issues."
+
 ### Requirement: Phase Execution
 The system SHALL execute phases sequentially by reading `tasks.md`, identifying the current phase (first phase with unchecked tasks), crafting a prompt, and shelling out to the configured agent CLI.
 
 #### Scenario: Normal phase execution
 - **WHEN** a phase has unchecked tasks
-- **THEN** the system builds a prompt instructing the agent to use its litespec-apply skill for that phase and executes it
+- **THEN** the system builds a prompt instructing the agent to implement that phase and executes it
 
 #### Scenario: All phases complete
 - **WHEN** no unchecked tasks remain in any phase
@@ -43,7 +66,7 @@ The system MUST commit after each successfully reviewed phase with a conventiona
 - **THEN** the system stages all modified files and commits with subject `feat(<name>): complete phase N - <phase title>` and a body listing each completed task from that phase as a bullet point
 
 ### Requirement: Final Review
-The system SHALL run a comprehensive review after all phases complete by prompting the agent to use its litespec-review skill in pre-archive mode.
+The system SHALL run a comprehensive review after all phases complete by prompting the agent to review the full implementation.
 
 #### Scenario: Final review pass
 - **WHEN** the final review finds no issues
@@ -63,3 +86,16 @@ The system SHALL open a pull request by shelling out to `gh pr create` with a ti
 #### Scenario: gh CLI not available
 - **WHEN** `gh` is not found on PATH
 - **THEN** the system prints the push command and a URL to create the PR manually
+
+## DELTA Requirements
+
+### Requirement: Empty Commit Handling
+The system MUST skip commits when there are no staged changes, avoiding "nothing to commit" errors.
+
+#### Scenario: No staged changes
+- **WHEN** `git diff --cached --quiet` exits 0 (no staged changes)
+- **THEN** the system skips the commit and continues without error
+
+#### Scenario: Staged changes exist
+- **WHEN** `git diff --cached --quiet` exits 1 (staged changes present)
+- **THEN** the system proceeds with the commit
