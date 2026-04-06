@@ -14,11 +14,9 @@ The adapter lives in a new layer between the pipeline and the opencode HTTP serv
 
 3. **SSE consumer** (`internal/agent/ocsse.go`) — reads `GET /global/event`, parses SSE frames into typed Go events, and fans them out to the TUI via the existing `EventHandler` callback. Coalesces bursty text deltas onto a configurable render tick.
 
-4. **RPC adapter** (`internal/agent/opencode-rpc.go`) — implements the pipeline-facing agent interface. Creates one implementation session for the apply-fix loop and disposable review sessions for each review pass. Maps pipeline steps to server API calls and extracts `Result.Stdout` from response parts.
+4. **RPC adapter** (`internal/agent/opencode-rpc.go`) — implements the `Agent` and `RPCAgent` interfaces (defined by pi-rpc-integration in `internal/agent/adapter.go`). Creates one implementation session for the apply-fix loop and disposable review sessions for each review pass. Maps pipeline steps to server API calls and extracts `Result.Stdout` from response parts.
 
-5. **RPC adapter** (`internal/agent/opencode-rpc.go`) — implements the `RPCAgent` interface (defined by pi-rpc-integration in `internal/agent/rpc.go`). Creates one implementation session for the apply-fix loop and disposable review sessions for each review pass. Maps pipeline steps to server API calls and extracts `Result.Stdout` from response parts.
-
-6. **Agent registration** — registers `opencode-rpc` as a distinct agent name that pi-rpc-integration's agent resolution can select via `--agent opencode-rpc`. The existing `opencode` agent name remains the CLI shell-out path.
+5. **Agent registration** — registers `opencode-rpc` as a distinct agent name that pi-rpc-integration's agent resolution can select via `--agent opencode-rpc`. The existing `opencode` agent name remains the CLI shell-out path.
 
 ## Decisions
 
@@ -48,7 +46,7 @@ The pipeline runs unattended, so opencode permission requests are auto-approved.
 
 ## File Changes
 
-- `internal/agent/opencode-rpc.go` — implement the `Agent` and `RPCAgent` interfaces (defined by pi-rpc-integration in `internal/agent/rpc.go`). Manages one implementation session and disposable review sessions. Extracts response text from server message parts. Supports `OpenCode RPC Adapter`.
+- `internal/agent/opencode-rpc.go` — implement the `Agent` and `RPCAgent` interfaces (defined by pi-rpc-integration in `internal/agent/adapter.go`). Manages one implementation session and disposable review sessions. Extracts response text from server message parts. Supports `OpenCode RPC Adapter`.
 
 - `internal/agent/ocserver.go` — start/stop `opencode serve` (or `opencode web` for development/debugging), health probe with timeout, process group cleanup. When `opencode_server_url` is set in config, skips startup and connects to the external server. Supports `Managed Server Process`.
 

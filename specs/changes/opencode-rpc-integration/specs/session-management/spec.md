@@ -28,7 +28,7 @@ The adapter SHALL create a fresh opencode session for each phase review and the 
 The adapter SHALL accept a model selection for each pipeline step and pass it as the `model` parameter on every `POST /session/:id/message` call. The model MAY differ between apply, review, and fix steps.
 
 #### Scenario: Review uses a different model
-- **WHEN** the config specifies a separate review model
+- **WHEN** a separate review model is configured
 - **THEN** the adapter passes `{ providerID, modelID }` matching the review model on review prompts and the apply/fix model on implementation prompts
 
 #### Scenario: No model override

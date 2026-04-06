@@ -1,2 +1,4 @@
 schema: spec-driven
 created: 2026-04-05T23:21:37Z
+dependsOn:
+  - pi-rpc-integration

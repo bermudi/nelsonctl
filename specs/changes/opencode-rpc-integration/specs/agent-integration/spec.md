@@ -10,11 +10,11 @@ The system SHALL include an opencode RPC adapter in `internal/agent/opencode-rpc
 - **THEN** the pipeline uses the opencode RPC adapter through pi-rpc-integration's smart-path routing
 
 #### Scenario: Adapter falls back to CLI
-- **WHEN** the user selects `--agent opencode` (without `-rpc`) or the config disables RPC
+- **WHEN** the user selects `--agent opencode` (without `-rpc`) or RPC is disabled
 - **THEN** nelsonctl uses the existing CLI `opencode run` adapter
 
 ### Requirement: Agent Contract Adoption
-The opencode RPC adapter SHALL implement the `RPCAgent` interface (owned by `pi-rpc-integration` in `internal/agent/rpc.go`) without modifying the interface itself. The pipeline's smart-path routing (`AsRPC()` check in `runPhase`) is owned by pi-rpc-integration; this change only provides the opencode implementation.
+The opencode RPC adapter SHALL implement the `RPCAgent` interface (owned by `pi-rpc-integration` in `internal/agent/adapter.go`) without modifying the interface itself. The pipeline's smart-path routing (`AsRPC()` check in `runPhase`) is owned by pi-rpc-integration; this change only provides the opencode implementation.
 
 #### Scenario: Pipeline detects RPC capability
 - **WHEN** the pipeline receives the opencode-rpc adapter and checks `AsRPC()`
