@@ -24,6 +24,29 @@ func TestRunCLIWithMockAgent(t *testing.T) {
 	agentLog := filepath.Join(repoRoot, "agent.log")
 	gitLog := filepath.Join(repoRoot, "git.log")
 	ghLog := filepath.Join(repoRoot, "gh.log")
+	configHome := t.TempDir()
+	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
+		"agent: opencode",
+		"steps:",
+		"  apply:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 1s",
+		"  review:",
+		"    model: moonshotai/kimi-k2.5",
+		"    timeout: 1s",
+		"  fix:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 1s",
+		"controller:",
+		"  provider: openrouter",
+		"  model: deepseek/deepseek-reasoner",
+		"  max_tool_calls: 50",
+		"  timeout: 45m",
+		"review:",
+		"  fail_on: critical",
+	}, "\n"))
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
 
 	mustWriteScript(t, filepath.Join(binDir, "opencode"), `#!/bin/sh
 prompt=""
@@ -85,15 +108,17 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("MOCK_AGENT_LOG", agentLog)
 	t.Setenv("MOCK_GIT_LOG", gitLog)
 	t.Setenv("MOCK_GH_LOG", ghLog)
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runCLI(context.Background(), []string{"--agent", "opencode", "--timeout", "1s", "--verbose", changeDir}, repoRoot, stdout, stderr)
+	code := runCLI(context.Background(), []string{"--verbose", changeDir}, repoRoot, strings.NewReader(""), stdout, stderr)
 	if code != 0 {
-		t.Fatalf("runCLI() code = %d, stderr = %s", code, stderr.String())
+		t.Fatalf("runCLI() code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
 	}
 
 	out := stdout.String()
@@ -139,6 +164,29 @@ func TestRunCLIDryRunSkipsExecution(t *testing.T) {
 	repoRoot := t.TempDir()
 	changeDir := filepath.Join(repoRoot, "specs", "changes", "initial-scaffold")
 	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Initialize Go module\n")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
+	configHome := t.TempDir()
+	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
+		"agent: opencode",
+		"steps:",
+		"  apply:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 30m",
+		"  review:",
+		"    model: moonshotai/kimi-k2.5",
+		"    timeout: 15m",
+		"  fix:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 30m",
+		"controller:",
+		"  provider: openrouter",
+		"  model: deepseek/deepseek-reasoner",
+		"  max_tool_calls: 50",
+		"  timeout: 45m",
+		"review:",
+		"  fail_on: critical",
+	}, "\n"))
 
 	binDir := t.TempDir()
 	mustWriteScript(t, filepath.Join(binDir, "opencode"), `#!/bin/sh
@@ -151,18 +199,20 @@ exit 99
 `)
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("MOCK_AGENT_LOG", filepath.Join(repoRoot, "agent.log"))
 	t.Setenv("MOCK_GIT_LOG", filepath.Join(repoRoot, "git.log"))
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runCLI(context.Background(), []string{"--dry-run", "--agent", "opencode", changeDir}, repoRoot, stdout, stderr)
+	code := runCLI(context.Background(), []string{"--dry-run", changeDir}, repoRoot, strings.NewReader(""), stdout, stderr)
 	if code != 0 {
-		t.Fatalf("runCLI() code = %d, stderr = %s", code, stderr.String())
+		t.Fatalf("runCLI() code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
 	}
 
 	out := stdout.String()
-	for _, want := range []string{"Dry run for", "Branch: change/initial-scaffold", "Phase 1: Foundation"} {
+	for _, want := range []string{"Dry run for", "Mode: Ralph", "Agent: opencode", "Review fail_on: critical", "Branch: change/initial-scaffold", "Phase 1: Foundation"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout missing %q in %q", want, out)
 		}
@@ -181,6 +231,29 @@ func TestRunCLINoPRSkipsPRCreation(t *testing.T) {
 	changeDir := filepath.Join(repoRoot, "specs", "changes", "initial-scaffold")
 	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Initialize Go module\n")
 	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
+	configHome := t.TempDir()
+	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
+		"agent: opencode",
+		"steps:",
+		"  apply:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 30m",
+		"  review:",
+		"    model: moonshotai/kimi-k2.5",
+		"    timeout: 15m",
+		"  fix:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 30m",
+		"controller:",
+		"  provider: openrouter",
+		"  model: deepseek/deepseek-reasoner",
+		"  max_tool_calls: 50",
+		"  timeout: 45m",
+		"review:",
+		"  fail_on: critical",
+	}, "\n"))
 
 	binDir := t.TempDir()
 	gitLog := filepath.Join(repoRoot, "git.log")
@@ -199,18 +272,49 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 `)
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("MOCK_GIT_LOG", gitLog)
 	t.Setenv("MOCK_GH_LOG", filepath.Join(repoRoot, "gh.log"))
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runCLI(context.Background(), []string{"--no-pr", "--verbose", "--agent", "opencode", changeDir}, repoRoot, stdout, stderr)
+	code := runCLI(context.Background(), []string{"--no-pr", "--verbose", changeDir}, repoRoot, strings.NewReader(""), stdout, stderr)
 	if code != 0 {
-		t.Fatalf("runCLI() code = %d, stderr = %s", code, stderr.String())
+		t.Fatalf("runCLI() code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
 	}
 
 	if _, err := os.Stat(filepath.Join(repoRoot, "gh.log")); !os.IsNotExist(err) {
 		t.Fatalf("gh log should not exist or be unused: %v", err)
+	}
+}
+
+func TestRunCLIInitWritesConfig(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := runCLI(context.Background(), []string{"init"}, t.TempDir(), strings.NewReader("\n"), stdout, stderr)
+	if code != 0 {
+		t.Fatalf("runCLI() code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
+	}
+
+	configPath := filepath.Join(configHome, "nelsonctl", "config.yaml")
+	data := mustReadFile(t, configPath)
+	for _, want := range []string{
+		"agent: pi",
+		"provider: openrouter",
+		"model: deepseek/deepseek-reasoner",
+		"model: minimax/minimax-m2.7",
+		"model: moonshotai/kimi-k2.5",
+	} {
+		if !strings.Contains(data, want) {
+			t.Fatalf("config missing %q in %q", want, data)
+		}
+	}
+	if strings.Contains(data, "API_KEY") {
+		t.Fatalf("config should not contain credentials: %q", data)
 	}
 }
 

@@ -19,8 +19,8 @@ type fakeAgent struct {
 	errs    []error
 }
 
-func (f *fakeAgent) Name() string     { return "fake" }
-func (f *fakeAgent) Available() error { return nil }
+func (f *fakeAgent) Name() string                                 { return "fake" }
+func (f *fakeAgent) CheckPrerequisites(ctx context.Context) error { return nil }
 
 func (f *fakeAgent) Run(ctx context.Context, prompt string, workDir string) (*agent.Result, error) {
 	f.calls = append(f.calls, prompt+"|"+workDir)

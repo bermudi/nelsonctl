@@ -94,6 +94,13 @@ func wrapJSONLCallback(wrapped StreamCallback, chunk []byte) (StreamCallback, bo
 	return cb.wrapped, true
 }
 
+// NewPi creates a pi adapter.
+func NewPi(opts ...Option) Agent {
+	return newAdapter("pi", "pi", func(prompt string) []string {
+		return []string{"-p", prompt}
+	}, opts...)
+}
+
 // NewOpencode creates an opencode adapter.
 func NewOpencode(opts ...Option) Agent {
 	format := "json"

@@ -1,11 +1,11 @@
 # Tasks
 
 ## Phase 1: Runtime Configuration
-- [ ] Add config structs, defaults, XDG loading, and validation for `Config File`, including controller provider/model settings
-- [ ] Implement `nelsonctl init` minimal and advanced flows for `Initialization Wizard`, including controller configuration
-- [ ] Wire startup checks for `Agent Prerequisite Check`, `Workspace Validation`, and `Credential Handling` (including controller provider credentials)
-- [ ] Implement execution-mode resolution for `Pi-First Agent Resolution`
-- [ ] Write tests for config parsing, environment-driven credentials, controller settings, and startup validation
+- [x] Add config structs, defaults, XDG loading, and validation for `Config File`, including controller provider/model settings
+- [x] Implement `nelsonctl init` minimal and advanced flows for `Initialization Wizard`, including controller configuration
+- [x] Wire startup checks for `Agent Prerequisite Check`, `Workspace Validation`, and `Credential Handling` (including controller provider credentials)
+- [x] Implement execution-mode resolution for `Pi-First Agent Resolution`
+- [x] Write tests for config parsing, environment-driven credentials, controller settings, and startup validation
 
 ## Phase 2: Controller AI
 - [ ] Define the Controller interface and tool types in `internal/controller/controller.go` — `read_file`, `get_diff`, `submit_prompt`, `run_review`, `approve`

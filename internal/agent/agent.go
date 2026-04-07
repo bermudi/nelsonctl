@@ -12,7 +12,7 @@ import (
 // Agent executes a prompt against an AI CLI.
 type Agent interface {
 	Name() string
-	Available() error
+	CheckPrerequisites(ctx context.Context) error
 	Run(ctx context.Context, prompt string, workDir string) (*Result, error)
 }
 
@@ -102,8 +102,8 @@ func (a *adapter) Name() string {
 	return a.name
 }
 
-// Available checks whether the adapter binary is on PATH.
-func (a *adapter) Available() error {
+// CheckPrerequisites checks whether the adapter binary is on PATH.
+func (a *adapter) CheckPrerequisites(ctx context.Context) error {
 	if a.binary == "" {
 		return errors.New("agent binary is not configured")
 	}
@@ -114,7 +114,21 @@ func (a *adapter) Available() error {
 	}
 
 	if _, err := lookup(a.binary); err != nil {
+		if a.binary == "pi" {
+			return fmt.Errorf("pi is required for Nelson mode; install pi or choose an explicit CLI agent: %w", err)
+		}
 		return fmt.Errorf("%s not available on PATH: %w", a.binary, err)
+	}
+
+	if a.binary == "pi" {
+		cmd := exec.CommandContext(ctx, a.binary, "--mode", "rpc", "--no-extensions", "--version")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			trimmed := strings.TrimSpace(string(out))
+			if trimmed == "" {
+				return fmt.Errorf("pi is installed but failed the RPC startup check: %w", err)
+			}
+			return fmt.Errorf("pi is installed but failed the RPC startup check: %w: %s", err, trimmed)
+		}
 	}
 
 	return nil
@@ -147,6 +161,8 @@ func New(name string, opts ...Option) (Agent, error) {
 	switch strings.ToLower(name) {
 	case "opencode":
 		return NewOpencode(opts...), nil
+	case "pi":
+		return NewPi(opts...), nil
 	case "claude":
 		return NewClaude(opts...), nil
 	case "codex":

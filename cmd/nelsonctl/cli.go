@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/bermudi/nelsonctl/internal/agent"
+	"github.com/bermudi/nelsonctl/internal/config"
 	"github.com/bermudi/nelsonctl/internal/git"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
 	"github.com/bermudi/nelsonctl/internal/tui"
@@ -18,17 +20,36 @@ import (
 
 type options struct {
 	agentName string
-	timeout   time.Duration
 	dryRun    bool
 	noPR      bool
 	verbose   bool
 }
 
 // runCLI parses flags and executes nelsonctl.
-func runCLI(ctx context.Context, args []string, cwd string, stdout, stderr io.Writer) int {
+func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "init" {
+		return runInit(stdout, stderr, stdin)
+	}
+
 	opts, changePath, err := parseArgs(args, stderr)
 	if err != nil {
 		return 2
+	}
+
+	cfg, _, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	resolvedAgent := config.ResolveAgent(cfg, opts.agentName)
+	if err := config.ValidateWorkspace(cwd); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := config.ValidateControllerCredentials(cfg, os.Getenv); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 
 	absChangePath := changePath
@@ -37,26 +58,26 @@ func runCLI(ctx context.Context, args []string, cwd string, stdout, stderr io.Wr
 	}
 
 	if opts.dryRun {
-		if err := printDryRun(stdout, changePath, absChangePath, opts.agentName); err != nil {
+		if err := printDryRun(stdout, changePath, absChangePath, cfg, resolvedAgent); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return 0
 	}
 
-	agentOptions := []agent.Option{agent.WithTimeout(opts.timeout)}
+	agentOptions := []agent.Option{agent.WithTimeout(cfg.EffectiveTimeout())}
 	if opts.verbose {
 		agentOptions = append(agentOptions, agent.WithStdoutCallback(func(chunk []byte) {
 			_, _ = stdout.Write(chunk)
 		}))
 	}
 
-	agentClient, err := agent.New(opts.agentName, agentOptions...)
+	agentClient, err := agent.New(resolvedAgent.Name, agentOptions...)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := agentClient.Available(); err != nil {
+	if err := agentClient.CheckPrerequisites(ctx); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -130,8 +151,7 @@ func parseArgs(args []string, stderr io.Writer) (options, string, error) {
 	fs.SetOutput(stderr)
 
 	var opts options
-	fs.StringVar(&opts.agentName, "agent", "opencode", "agent CLI to use")
-	fs.DurationVar(&opts.timeout, "timeout", 30*time.Minute, "timeout per agent invocation")
+	fs.StringVar(&opts.agentName, "agent", "", "agent to use (defaults to config, pi-first)")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "show the pipeline plan without executing")
 	fs.BoolVar(&opts.noPR, "no-pr", false, "skip pull request creation")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show full agent output")
@@ -146,7 +166,7 @@ func parseArgs(args []string, stderr io.Writer) (options, string, error) {
 	return opts, fs.Arg(0), nil
 }
 
-func printDryRun(stdout io.Writer, changeArg, absChangePath, agentName string) error {
+func printDryRun(stdout io.Writer, changeArg, absChangePath string, cfg config.Config, resolved config.ResolvedAgent) error {
 	phases, err := pipeline.ParseTasksFile(filepath.Join(absChangePath, "tasks.md"))
 	if err != nil {
 		return err
@@ -154,9 +174,17 @@ func printDryRun(stdout io.Writer, changeArg, absChangePath, agentName string) e
 
 	branch := "change/" + filepath.Base(filepath.Clean(absChangePath))
 	fmt.Fprintf(stdout, "Dry run for %s\n", changeArg)
-	fmt.Fprintf(stdout, "Agent: %s\n", agentName)
+	fmt.Fprintf(stdout, "Mode: %s\n", resolved.Mode)
+	fmt.Fprintf(stdout, "Agent: %s\n", resolved.Name)
+	fmt.Fprintf(stdout, "Apply model: %s\n", cfg.Steps.Apply.Model)
+	fmt.Fprintf(stdout, "Review model: %s\n", cfg.Steps.Review.Model)
+	fmt.Fprintf(stdout, "Fix model: %s\n", cfg.Steps.Fix.Model)
+	fmt.Fprintf(stdout, "Review fail_on: %s\n", cfg.Review.FailOn)
 	fmt.Fprintf(stdout, "Branch: %s\n", branch)
 	for _, phase := range phases {
+		if phaseDone(phase) {
+			continue
+		}
 		fmt.Fprintf(stdout, "\nPhase %d: %s\n", phase.Number, phase.Name)
 		for _, task := range phase.Tasks {
 			marker := " "
@@ -167,6 +195,18 @@ func printDryRun(stdout io.Writer, changeArg, absChangePath, agentName string) e
 		}
 	}
 	return nil
+}
+
+func phaseDone(phase pipeline.Phase) bool {
+	if len(phase.Tasks) == 0 {
+		return false
+	}
+	for _, task := range phase.Tasks {
+		if !task.Done {
+			return false
+		}
+	}
+	return true
 }
 
 func printRunSummary(stdout io.Writer, report *pipeline.Report) {

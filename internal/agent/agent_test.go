@@ -22,6 +22,7 @@ func TestNewSelectsSupportedAdapters(t *testing.T) {
 		name string
 		want string
 	}{
+		{name: "pi", want: "pi"},
 		{name: "opencode", want: "opencode"},
 		{name: "claude", want: "claude"},
 		{name: "codex", want: "codex"},
@@ -47,7 +48,7 @@ func TestNewRejectsUnknownAgent(t *testing.T) {
 	}
 }
 
-func TestAdapterAvailableUsesPATHLookup(t *testing.T) {
+func TestAdapterCheckPrerequisitesUsesPATHLookup(t *testing.T) {
 	a := newAdapter("opencode", "opencode", func(prompt string) []string {
 		return []string{"run", "--format", "json", prompt}
 	})
@@ -58,13 +59,13 @@ func TestAdapterAvailableUsesPATHLookup(t *testing.T) {
 		return "", errors.New("not found")
 	}
 
-	if err := a.Available(); err == nil {
-		t.Fatal("Available() error = nil, want error")
+	if err := a.CheckPrerequisites(context.Background()); err == nil {
+		t.Fatal("CheckPrerequisites() error = nil, want error")
 	}
 
 	a.lookupPath = func(binary string) (string, error) { return "/usr/bin/" + binary, nil }
-	if err := a.Available(); err != nil {
-		t.Fatalf("Available() error = %v", err)
+	if err := a.CheckPrerequisites(context.Background()); err != nil {
+		t.Fatalf("CheckPrerequisites() error = %v", err)
 	}
 }
 

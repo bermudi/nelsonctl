@@ -10,5 +10,5 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
-	os.Exit(runCLI(context.Background(), os.Args[1:], cwd, os.Stdout, os.Stderr))
+	os.Exit(runCLI(context.Background(), os.Args[1:], cwd, os.Stdin, os.Stdout, os.Stderr))
 }
