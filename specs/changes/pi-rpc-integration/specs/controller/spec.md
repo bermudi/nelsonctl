@@ -22,7 +22,7 @@ The controller MUST have exactly five tools available. No other tools SHALL be p
 
 - `read_file(path: string) → string` — reads a file from the workspace and returns its contents. Used to discover specs, design documents, code, and other artifacts.
 - `get_diff() → string` — returns the current `git diff` output showing uncommitted changes in the workspace.
-- `submit_prompt(prompt: string) → string` — sends a prompt to the implementation agent (Pi or CLI) and blocks until the agent completes. Returns a short completion status, NOT the agent's full transcript.
+- `submit_prompt(prompt: string) → string` — sends a prompt to the implementation agent (Pi or CLI) and blocks until the agent completes. Returns "Agent completed successfully." on success or an error description on failure. Does NOT return the agent's full transcript.
 - `run_review() → string` — triggers a mechanical litespec-review using the configured review prompt and returns the raw review output. The review prompt is NOT drafted by the controller.
 - `approve(summary: string)` — declares the phase passed with a one-line summary. The pipeline commits the phase and moves on. This tool ends the controller conversation.
 
@@ -48,6 +48,10 @@ The controller MUST draft the initial apply prompt for each phase by reading the
 #### Scenario: Rich initial prompt
 - **WHEN** the controller begins a new phase
 - **THEN** it reads the proposal, design, and relevant component spec via `read_file`, then calls `submit_prompt` with a prompt that references specific requirements, design decisions, and target files
+
+#### Scenario: Missing artifact file
+- **WHEN** the controller calls `read_file` for a spec or design file that does not exist
+- **THEN** the controller proceeds with available context, using whatever artifacts it could discover
 
 ### Requirement: Controller Review Analysis
 The controller MUST analyze review output through comprehension, not parsing. When `run_review` returns the raw review output, the controller reads and reasons about it in the context of the spec requirements and the `review.fail_on` threshold injected in its system prompt. It MUST NOT rely on regex patterns, substring matching, or structured format expectations.
@@ -84,6 +88,17 @@ The system SHALL use a fresh controller conversation to handle the final pre-arc
 #### Scenario: Final review loop
 - **WHEN** all phases are complete
 - **THEN** the pipeline creates a final-review controller conversation that calls `run_review`, analyzes the output, and either calls `approve` or crafts fix prompts
+
+### Requirement: Controller Retry Budget
+The pipeline MUST enforce a maximum of 3 fix-review cycles per phase. After each failed review, the pipeline injects the attempt count ("Attempt N of 3") into the controller conversation so the controller can adjust strategy on the final attempt. When the third fix-review cycle still fails, the pipeline MUST terminate the controller conversation and mark the phase as failed.
+
+#### Scenario: Third attempt fails
+- **WHEN** the controller has completed 3 fix-review cycles without calling `approve`
+- **THEN** the pipeline terminates the conversation, preserves on-disk work, and marks the phase as failed
+
+#### Scenario: Attempt count injected
+- **WHEN** a review fails and the controller is about to send a fix prompt
+- **THEN** the pipeline injects "Attempt N of 3" into the controller conversation before the controller's next turn
 
 ### Requirement: Controller Guardrails
 The pipeline MUST enforce a maximum of 50 tool calls and a 45-minute timeout per controller conversation. These limits MUST be configurable. When either limit is reached, the pipeline MUST terminate the controller conversation and mark the phase as failed.
@@ -123,12 +138,4 @@ The system MUST support two controller providers: DeepSeek direct API and OpenRo
 - **THEN** the pipeline fails startup with a message naming the required variable
 
 ### Requirement: Controller TUI Visibility
-The TUI MUST surface controller activity as status lines generated mechanically from tool call names. No additional model or parsing is required — the tool call name determines the status message.
-
-#### Scenario: Controller tool call status
-- **WHEN** the controller calls `submit_prompt`
-- **THEN** the TUI displays "⚙ Controller: sending apply prompt..."
-
-#### Scenario: Controller approval
-- **WHEN** the controller calls `approve` with a summary
-- **THEN** the TUI displays "⚙ Controller: approved — {summary}"
+The TUI MUST surface controller activity as status lines generated mechanically from tool call names, as specified in the Operator Visibility spec's Controller Activity Visibility requirement. No additional model or parsing is required — the tool call name determines the status message. The authoritative scenarios live in `specs/changes/pi-rpc-integration/specs/operator-visibility/spec.md`.

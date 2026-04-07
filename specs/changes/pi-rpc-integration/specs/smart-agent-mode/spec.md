@@ -62,11 +62,15 @@ The system MUST stream the active agent's output to the TUI in real time while p
 - **THEN** stdout chunks appear in the TUI output panel as they arrive
 
 ### Requirement: Step Timeouts and Abort
-The system SHALL enforce separate configurable timeouts for apply, review, and fix steps, and it SHALL terminate the active Pi or CLI process when the operator aborts the run.
+The system operates with two tiers of timeout. At the controller level, the pipeline enforces a 45-minute conversation timeout and a 50-tool-call budget (see Controller Guardrails). At the agent level, individual `submit_prompt` and `run_review` calls have separate configurable timeouts for apply, review, and fix steps. A step-level timeout returns an error result to the controller, which can retry or call `approve`. A conversation-level timeout terminates the phase entirely. The system SHALL terminate the active Pi or CLI process when the operator aborts the run.
 
-#### Scenario: Review timeout
-- **WHEN** a review step exceeds its configured timeout
-- **THEN** nelsonctl terminates the current agent process and marks that attempt as failed
+#### Scenario: Step timeout returns error to controller
+- **WHEN** a `submit_prompt` or `run_review` call exceeds its configured step timeout
+- **THEN** the agent layer terminates the current operation and returns an error result to the controller, which decides whether to retry or give up
+
+#### Scenario: Conversation timeout terminates phase
+- **WHEN** the controller conversation exceeds its 45-minute budget
+- **THEN** the pipeline terminates the entire conversation and marks the phase as failed (see Controller Guardrails)
 
 #### Scenario: Manual abort
 - **WHEN** the user presses the abort keybinding

@@ -18,7 +18,7 @@ The system SHALL create `change/<name>` the first time a change runs and SHALL r
 - **THEN** nelsonctl aborts before changing branches
 
 ### Requirement: Pi-Aware Phase Execution
-The system SHALL execute phases sequentially starting from the first unchecked task in `tasks.md`. When the selected agent supports RPC, apply and fix MUST run through the long-lived implementation session and review MUST run through disposable review sessions; when the selected agent is CLI-only, the scaffold's one-command-per-step loop SHALL remain in effect.
+The system SHALL execute phases sequentially starting from the first unchecked task in `tasks.md`. The controller AI drives all phases via `submit_prompt` and `run_review`, regardless of whether the underlying agent is RPC-capable or CLI-only. When the agent supports RPC, apply and fix MUST run through the long-lived implementation session and review MUST run through disposable review sessions; when the agent is CLI-only, the controller's `submit_prompt` and `run_review` calls route to CLI shell-out invocations.
 
 #### Scenario: Resume at later phase
 - **WHEN** phases 1 and 2 are already fully checked in `tasks.md`
@@ -26,11 +26,11 @@ The system SHALL execute phases sequentially starting from the first unchecked t
 
 #### Scenario: Pi smart path
 - **WHEN** the effective agent is `pi`
-- **THEN** nelsonctl uses the Pi session lifecycle for apply, review, and fix within the phase loop
+- **THEN** the controller drives apply, review, and fix through the Pi RPC session lifecycle
 
-#### Scenario: CLI dumb path
+#### Scenario: CLI path via controller
 - **WHEN** the effective agent is `claude`
-- **THEN** nelsonctl uses the scaffold's one-command-per-step loop for apply, review, and fix
+- **THEN** the controller drives apply, review, and fix by routing `submit_prompt` and `run_review` to CLI shell-out invocations
 
 ### Requirement: Recovery Commits and Scoped Staging
 The system MUST commit after each phase using only files returned by `git diff --name-only`. If a resumed run starts on the change branch with uncommitted tracked changes, the system SHALL create a recovery commit before it sends any new apply prompt.
@@ -44,15 +44,15 @@ The system MUST commit after each phase using only files returned by `git diff -
 - **THEN** it creates a recovery commit before asking the agent to continue
 
 ### Requirement: Final Review Gate
-The system SHALL run the final review using the same parsing and failure-threshold policy as phase reviews, using the configured review model before PR creation.
+The system SHALL run the final pre-archive review through a fresh controller conversation scoped to the full change. The controller reasons about the review output and applies the configured `review.fail_on` threshold through comprehension, following the same tool-calling pattern as phase reviews.
 
 #### Scenario: Final review in Pi mode
 - **WHEN** all phases are complete and the effective agent is `pi`
-- **THEN** nelsonctl runs the pre-archive review in a fresh Pi review session using the configured review model
+- **THEN** the controller runs the pre-archive review via `run_review`, which creates a fresh Pi review session using the configured review model
 
 #### Scenario: Final review failure
-- **WHEN** the final review produces issues at or above the configured failure threshold
-- **THEN** nelsonctl enters the same fix and re-review loop used for phase reviews
+- **WHEN** the final review produces issues that the controller determines are at or above the configured failure threshold
+- **THEN** the controller crafts fix prompts and the pipeline enters the same fix-review loop used for phase reviews, subject to the 3-attempt retry budget
 
 ### Requirement: Workspace Validation
 The system SHALL validate that the working directory is a litespec project before starting a run. It MUST confirm that `specs/` exists and that `.agents/skills/litespec-apply/` and `.agents/skills/litespec-review/` are available before acquiring the run lock or invoking an agent.
