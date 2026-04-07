@@ -3,11 +3,11 @@
 ## ADDED Requirements
 
 ### Requirement: SSE Event Consumption
-The adapter SHALL subscribe to `GET /global/event` (SSE) for the lifetime of the server connection and SHALL parse incoming events into typed pipeline messages that the TUI and review parser can consume.
+The adapter SHALL subscribe to `GET /global/event` (SSE) for the lifetime of the server connection and SHALL parse incoming events into typed pipeline messages that the TUI can consume.
 
 #### Scenario: Streaming apply output
 - **WHEN** the implementation session is processing an apply prompt
-- **THEN** the adapter forwards text-delta events as `Event{Type: TextEvent, Content: delta}` values to the `Events()` channel and accumulates the full response for review parsing
+- **THEN** the adapter forwards text-delta events as `Event{Type: TextEvent, Content: delta}` values to the `Events()` channel
 
 #### Scenario: Tool execution events
 - **WHEN** opencode emits tool execution events during a step
@@ -33,7 +33,7 @@ The adapter SHALL coalesce rapid SSE events onto a 50ms render tick (configurabl
 - **THEN** the adapter uses that value as the coalescing interval instead of the 50ms default
 
 ### Requirement: Response Extraction
-After a synchronous `POST /session/:id/message` call completes, the adapter SHALL return the assistant's response text as the `Result.Stdout` field, preserving compatibility with the existing pipeline's `resultText()` helper and review parser.
+After a synchronous `POST /session/:id/message` call completes, the adapter SHALL return the assistant's response text as the `Result.Stdout` field, preserving compatibility with the existing pipeline's `resultText()` helper.
 
 #### Scenario: Apply completes
 - **WHEN** the opencode message endpoint returns the assistant response
@@ -41,4 +41,4 @@ After a synchronous `POST /session/:id/message` call completes, the adapter SHAL
 
 #### Scenario: Review completes
 - **WHEN** the review message endpoint returns the assistant response
-- **THEN** the adapter extracts the full review text for the three-tier review parser
+- **THEN** the adapter extracts the full review text and returns it as `Result.Stdout` for the controller AI to analyze

@@ -34,3 +34,18 @@ The system MUST read provider credentials from environment variables and MUST NO
 #### Scenario: Writing config
 - **WHEN** `nelsonctl init` writes `config.yaml`
 - **THEN** the file contains settings only and omits any API key values
+
+### Requirement: Controller Configuration
+The system SHALL support controller configuration under the `controller` section in `config.yaml`, including `provider` (`deepseek` or `openrouter`), `model` (the model identifier), `max_tool_calls` (default 50), and `timeout` (default 45m). Both providers use OpenAI-compatible endpoints. Credentials come from `DEEPSEEK_API_KEY` or `OPENROUTER_API_KEY` environment variables.
+
+#### Scenario: DeepSeek direct provider
+- **WHEN** `controller.provider` is `deepseek`
+- **THEN** the controller calls the DeepSeek API at `https://api.deepseek.com/chat/completions` using `DEEPSEEK_API_KEY`
+
+#### Scenario: OpenRouter provider
+- **WHEN** `controller.provider` is `openrouter`
+- **THEN** the controller calls the OpenRouter API at `https://openrouter.ai/api/v1/chat/completions` using `OPENROUTER_API_KEY`
+
+#### Scenario: Controller guardrail defaults
+- **WHEN** `controller.max_tool_calls` and `controller.timeout` are not set in config
+- **THEN** nelsonctl uses defaults of 50 tool calls and 45 minutes

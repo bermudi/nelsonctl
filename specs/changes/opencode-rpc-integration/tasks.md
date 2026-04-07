@@ -1,6 +1,6 @@
 # Tasks
 
-**Prerequisite**: `pi-rpc-integration` must be applied first. This change assumes the `RPCAgent` interface, configuration system, pipeline smart-path routing, and agent resolution are already in place.
+**Prerequisite**: `pi-rpc-integration` must be applied first. This change assumes the `RPCAgent` interface, configuration system, controller AI, pipeline smart-path routing, and agent resolution are already in place. The controller is mode-agnostic and works with the opencode adapter without any controller-side changes.
 
 ## Phase 1: HTTP Client and Server Process
 - [ ] Implement `internal/agent/occlient.go` — typed HTTP client for `GET /global/health`, `POST /session`, `GET /session/:id`, `DELETE /session/:id`, `POST /session/:id/message`, `POST /session/:id/abort`, `POST /session/:id/permissions/:permissionID`, `POST /instance/dispose`. Request/response structs, error handling, optional basic auth. Supports all session management and message sending requirements.
@@ -21,3 +21,4 @@
 - [ ] Write `internal/agent/opencode-rpc_test.go` — integration tests with a mock HTTP server covering session lifecycle, apply/fix session reuse, review session isolation, model switching, abort, permission auto-approval, and crash recovery.
 - [ ] Run existing test suite to verify CLI adapters are unaffected by the adapter registration.
 - [ ] Verify that `opencode-rpc` implements the exact `Agent` and `RPCAgent` interface signatures defined in pi-rpc-integration's agent-adapter spec, including all method signatures, return types, and error behavior.
+- [ ] Verify that the controller AI can drive the implementation loop through the opencode adapter (submit_prompt and run_review route correctly to opencode sessions).

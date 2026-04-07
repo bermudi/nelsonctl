@@ -30,3 +30,22 @@ The TUI MUST display a summary on exit showing phases completed, phases failed, 
 #### Scenario: Resume exit summary
 - **WHEN** a resumed run finishes or aborts
 - **THEN** the summary includes the branch name and whether the run executed in Nelson mode or Ralph mode
+
+### Requirement: Controller Activity Visibility
+The TUI SHALL display controller activity as status lines generated mechanically from the controller's tool call names. No additional model or parsing is required. The full controller reasoning SHALL be written to the trace log, not the TUI.
+
+#### Scenario: Controller drafting prompt
+- **WHEN** the controller calls `submit_prompt`
+- **THEN** the TUI displays "⚙ Controller: sending apply prompt..."
+
+#### Scenario: Controller running review
+- **WHEN** the controller calls `run_review`
+- **THEN** the TUI displays "⚙ Controller: running review..."
+
+#### Scenario: Controller approving
+- **WHEN** the controller calls `approve` with a summary
+- **THEN** the TUI displays "⚙ Controller: approved — {summary}"
+
+#### Scenario: Controller analyzing
+- **WHEN** the controller is processing between tool calls (reasoning)
+- **THEN** the TUI displays "⚙ Controller: analyzing..."

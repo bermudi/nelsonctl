@@ -1,13 +1,22 @@
 # Tasks
 
 ## Phase 1: Runtime Configuration
-- [ ] Add config structs, defaults, XDG loading, and validation for `Config File`
-- [ ] Implement `nelsonctl init` minimal and advanced flows for `Initialization Wizard`
-- [ ] Wire startup checks for `Agent Prerequisite Check`, `Workspace Validation`, and `Credential Handling`
+- [ ] Add config structs, defaults, XDG loading, and validation for `Config File`, including controller provider/model settings
+- [ ] Implement `nelsonctl init` minimal and advanced flows for `Initialization Wizard`, including controller configuration
+- [ ] Wire startup checks for `Agent Prerequisite Check`, `Workspace Validation`, and `Credential Handling` (including controller provider credentials)
 - [ ] Implement execution-mode resolution for `Pi-First Agent Resolution`
-- [ ] Write tests for config parsing, environment-driven credentials, and startup validation
+- [ ] Write tests for config parsing, environment-driven credentials, controller settings, and startup validation
 
-## Phase 2: Pi RPC Transport
+## Phase 2: Controller AI
+- [ ] Define the Controller interface and tool types in `internal/controller/controller.go` — `read_file`, `get_diff`, `submit_prompt`, `run_review`, `approve`
+- [ ] Implement the DeepSeek/OpenRouter client using OpenAI-compatible `/chat/completions` with tool calling in `internal/controller/controller.go`
+- [ ] Implement the tool-calling agent loop: dispatch tool calls, collect results, feed back into conversation, enforce 50-call and 45-minute guardrails
+- [ ] Write system prompts for phase controller and final-review controller in `internal/controller/prompts.go`
+- [ ] Implement tool dispatch in `internal/controller/tools.go` — `read_file` reads from disk, `get_diff` shells to git, `submit_prompt` and `run_review` delegate to the pipeline's agent execution, `approve` signals phase completion
+- [ ] Implement retry with exponential backoff (3 attempts) for controller API failures
+- [ ] Write tests for tool dispatch, agent loop lifecycle, guardrail enforcement, and API failure recovery using a mock OpenAI-compatible server
+
+## Phase 3: Pi RPC Transport
 - [ ] Extend the agent contract to support both CLI and RPC implementations for `Two-Tier Agent Execution`
 - [ ] Implement Pi process startup, JSONL framing, request correlation, and typed RPC payloads for `Pi RPC Sessions`
 - [ ] Implement apply-session reuse, disposable review sessions, and per-step model switching for `Pi RPC Sessions`
@@ -15,27 +24,25 @@
 - [ ] Implement Pi crash restart behavior for `Pi Crash Recovery`
 - [ ] Write tests for RPC framing, session lifecycle, and crash recovery
 
-## Phase 3: Review Intelligence
-- [ ] Implement fuzzy severity-section and scorecard parsing for `Three-Tier Review Detection`
-- [ ] Add heuristic fallback and issue-vs-scorecard conflict handling for `Three-Tier Review Detection`
-- [ ] Implement `review.fail_on` parsing and enforcement for `Review Failure Threshold`
-- [ ] Implement raw HTTP controller summarizer clients for OpenAI, Anthropic, and OpenRouter for `Controller Summarizer`
-- [ ] Wire compact parsed issues into fix steering for `Parsed Retry Loop`
-- [ ] Write tests for structured parsing, ambiguity fallback, threshold handling, and provider selection
-
-## Phase 4: Pipeline Resume and Safety
-- [ ] Update the orchestrator to choose Nelson mode vs Ralph mode at runtime for `Pi-Aware Phase Execution`
-- [ ] Implement branch reuse, first-unchecked-phase resume, and recovery commits for `Resumable Change Branch` and `Recovery Commits and Scoped Staging`
+## Phase 4: Pipeline Integration
+- [ ] Restructure the pipeline orchestrator to create a controller conversation per phase and delegate all prompt crafting and review analysis to the controller
+- [ ] Implement `submit_prompt` and `run_review` tool handlers that route to the effective agent (Pi RPC or CLI shell-out)
+- [ ] Remove `ReviewPassed()` regex detection, heuristic substring matching, and hardcoded `ApplyPrompt`/`FixPrompt`/`ReviewPrompt` templates
+- [ ] Implement the mechanical review prompt as a fixed template used by `run_review` tool handler
+- [ ] Inject `review.fail_on` threshold and phase tasks into the controller's system prompt
+- [ ] Inject attempt count ("Attempt N of M") into the controller conversation after each failed review
+- [ ] Implement branch reuse, first-unchecked-phase resume, and recovery commits for `Resumable Change Branch`
 - [ ] Add `.nelsonctl.lock` creation, stale PID cleanup, and lock release for `Run Locking`
-- [ ] Stage only changed files via `git diff --name-only` while preserving artifact-only staging for the first artifact commit
+- [ ] Stage only changed files via `git diff --name-only` for `Recovery Commits and Scoped Staging`
 - [ ] Implement the dry-run planner for `Dry-Run Plan`
-- [ ] Update final review handling to use the same parsing and threshold policy as phase reviews for `Final Review Gate`
-- [ ] Write tests for resume logic, lock handling, scoped staging, and smart-vs-dumb path selection
+- [ ] Wire the final pre-archive review through a fresh controller conversation scoped to the full change
+- [ ] Write tests for controller-pipeline integration, resume logic, lock handling, scoped staging, and mechanical review prompt
 
 ## Phase 5: TUI and Operator Experience
+- [ ] Surface controller tool call activity as mechanical status lines in the TUI (switch on tool name, no parsing)
 - [ ] Surface execution mode, selected agent, active model, and resume state in the TUI for `Execution Context Visibility`
 - [ ] Batch Pi `message_update` events onto the TUI render loop while preserving terminal events for `Pi Event Rendering`
-- [ ] Surface Pi restart events and keep the Nelson taunt behavior aligned with the modified retry loop
+- [ ] Surface Pi restart events in the TUI
 - [ ] Extend the exit summary with execution mode for `Exit Summary Includes Mode`
-- [ ] Document Pi-first setup, config, environment variables, and explicit CLI fallback in `README.md`
-- [ ] Add end-to-end coverage with a mock Pi RPC process and a mock CLI agent
+- [ ] Document Pi-first setup, controller configuration, environment variables, and CLI fallback in `README.md`
+- [ ] Add end-to-end coverage with a mock Pi RPC process, mock controller API, and a mock CLI agent

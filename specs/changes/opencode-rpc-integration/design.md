@@ -2,7 +2,7 @@
 
 This change adds an opencode RPC adapter that talks to `opencode serve` over HTTP, giving nelsonctl persistent sessions, per-step model selection, SSE streaming, and abort capability. The adapter coexists with the existing CLI adapters and the Pi RPC adapter behind the shared agent contract established by `pi-rpc-integration`.
 
-**Dependency**: This change requires `pi-rpc-integration` to be applied first. The `RPCAgent` interface, configuration system, pipeline smart-path routing, and TUI visibility are all owned by pi-rpc-integration.
+**Dependency**: This change requires `pi-rpc-integration` to be applied first. The `RPCAgent` interface, configuration system, controller AI (which drives the implementation loop via tool calls), pipeline smart-path routing, and TUI visibility are all owned by pi-rpc-integration. The controller is mode-agnostic — it calls `submit_prompt` and `run_review`, which the pipeline routes to whatever agent is active. The opencode adapter receives these routed calls without knowing about the controller.
 
 ## Architecture
 

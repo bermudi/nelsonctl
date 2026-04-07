@@ -1,75 +1,148 @@
 # pi-rpc-integration — Design Document
 
-This change upgrades the `initial-scaffold` architecture from a pure shell-out loop to a Pi-first execution model while preserving the CLI adapters as an explicit fallback path. The shape of the product stays the same: nelsonctl is still a pipeline runner over litespec artifacts, not a chat interface and not a general model host.
+This change upgrades the `initial-scaffold` architecture from a dumb loop with regex review detection to a controller-driven execution model. The controller AI reasons about the implementation loop — drafting prompts, analyzing reviews, crafting fixes — while the pipeline handles mechanical operations (git, sessions, locks, resume). A Pi RPC adapter adds persistent implementation sessions, but the controller works with both Pi and CLI agents.
 
 ## Architecture
 
-The runtime splits into four cooperating layers:
+The runtime splits into five cooperating layers:
 
-1. Configuration and startup validation resolve the effective agent, per-step models, timeouts, controller settings, workspace prerequisites, and lock state before any agent work begins.
-2. The pipeline orchestrator stays in charge of branch setup, resume detection, phase progression, review gates, commits, and PR creation.
-3. The agent layer now has two execution modes:
+1. **Configuration and startup** resolve the effective agent, controller provider/model, per-step models, timeouts, `review.fail_on` threshold, workspace prerequisites, and lock state before any work begins.
+
+2. **The pipeline orchestrator** handles branch setup, resume detection, phase progression, commits, locking, and PR creation. It is a mechanical state machine that defers all reasoning to the controller.
+
+3. **The controller** drives each phase as a tool-calling agent loop. It receives the phase tasks and `review.fail_on` threshold in its system prompt, discovers specs and code via `read_file`, sends prompts to the agent via `submit_prompt`, triggers reviews via `run_review`, inspects changes via `get_diff`, and ends the phase via `approve`. One controller conversation per phase, discarded after the phase completes. Cross-phase memory is the committed code on disk.
+
+4. **The agent layer** has two execution modes:
    - CLI adapters for the original one-command-per-step loop.
    - A Pi RPC adapter that keeps one implementation session alive for apply and fix, while spinning up a fresh review session for each review pass.
-4. The review layer normalizes raw reviewer output into a structured result that the pipeline can trust for retry decisions.
+   The controller does not know or care which agent mode is active. It calls `submit_prompt` and gets results back.
 
-In Nelson mode, startup resolves Pi plus controller-backed review parsing. The pipeline creates one Pi process for the run, starts an apply session, and reuses that session for every fix step. Each review pass creates a disposable review session so the reviewer does not inherit implementation bias. The review parser attempts fuzzy structured parsing first, falls back to heuristics second, and only then asks the controller summarizer to compress ambiguous output into machine-usable issues.
+5. **The TUI** renders agent output in real time and surfaces controller activity as mechanical status lines derived from tool calls. Full controller reasoning goes to the trace log.
 
-In Ralph mode, the pipeline skips RPC entirely and keeps the scaffold's shell-out behavior. This preserves a zero-config fallback path and avoids forcing API keys or Pi on users who explicitly want a plain CLI agent.
+### Controller Loop Flow
 
-The TUI remains a passive consumer. Pi output events are coalesced before they are forwarded to Bubble Tea, but the pipeline never buffers terminal events such as message end, retry, crash, or completion.
+For each phase, the pipeline starts a fresh controller conversation:
+
+```
+Pipeline starts phase N
+  │
+  ├─ Creates controller conversation with system prompt:
+  │    - Role: implementation controller
+  │    - Phase tasks (inlined)
+  │    - review.fail_on threshold
+  │    - Available tools
+  │
+  ├─ Controller calls read_file() to discover specs, design
+  ├─ Controller calls submit_prompt(rich apply prompt)
+  │    ├─ Pipeline routes to agent (Pi RPC or CLI)
+  │    ├─ Returns: agent completed (no transcript, just status)
+  │
+  ├─ Controller calls run_review()
+  │    ├─ Pipeline sends mechanical review prompt to agent
+  │    ├─ Returns: raw review output
+  │
+  ├─ Controller reasons about review output...
+  │    ├─ Passed? → calls approve(summary) → pipeline commits
+  │    └─ Failed? → calls submit_prompt(targeted fix prompt)
+  │         ├─ Pipeline injects "Attempt 2 of 3"
+  │         ├─ Controller calls run_review() again
+  │         └─ Loop continues...
+  │
+  └─ Pipeline enforces: max 3 attempts, 50 tool calls, 45min timeout
+```
+
+The final pre-archive review follows the same pattern: fresh controller conversation, scoped to the full change rather than a single phase.
 
 ## Decisions
 
+### Controller as primary brain, not last resort
+
+The controller replaces the three-tier review parser (fuzzy structured parsing → heuristic fallback → controller summarization) with a single AI component that understands review output through comprehension. This kills `ReviewPassed()` regex detection, the heuristic substring matching, and the planned fuzzy parser. One component, fewer failure modes, better results.
+
+### Tool-calling agent loop, not request-response
+
+The controller drives the pipeline by calling tools rather than returning structured responses for the pipeline to interpret. This eliminates output parsing between the controller and the pipeline. The tool call IS the decision — `approve()` means pass, `submit_prompt()` means fix. The pipeline reacts to tool invocations, not parsed text.
+
+### Five constrained tools
+
+`read_file(path)`, `get_diff()`, `submit_prompt(prompt)`, `run_review()`, `approve(summary)`. The controller cannot restart phases, reorder tasks, skip review, or give up. The pipeline enforces the attempt budget mechanically. The controller always wants to keep trying; the pipeline decides when to stop.
+
+### Review prompt stays mechanical
+
+The controller drafts apply and fix prompts but NOT the review prompt. Review uses the mechanical litespec-review prompt so the reviewer operates as a cold read, independent of the controller's theory about what went wrong. This prevents the controller from biasing the reviewer toward looking for or ignoring specific issues.
+
+### One conversation per phase
+
+Each phase gets a fresh controller conversation. Cross-phase memory is the committed code on disk, discoverable via `read_file`. This prevents context window degradation across phases and keeps each phase's reasoning focused on its own tasks.
+
+### Controller is mode-agnostic
+
+The controller works identically in Nelson mode (Pi RPC) and Ralph mode (CLI). It calls `submit_prompt` and gets results. The transport to the implementation agent is invisible to the controller. This means both modes benefit from AI-driven prompt crafting and review analysis.
+
+### review.fail_on as system prompt context
+
+The `review.fail_on` threshold is injected into the controller's system prompt: "Only fail if you find issues at severity X or above." The controller applies it through reasoning, not code. The config is the operator's intent; the controller respects it like a human engineer would.
+
+### DeepSeek 3.2 via direct API or OpenRouter
+
+Both providers use OpenAI-compatible `/chat/completions` with tool calling. One HTTP client implementation, two base URL / auth configurations. The operator can swap models by changing one config line.
+
+### Guardrails
+
+Max 50 tool calls and 45-minute timeout per controller conversation. These are safety nets, not leashes. The pipeline injects attempt count ("Attempt 2 of 3") after each failed review so the controller can adjust strategy on the last attempt.
+
+### Controller failure is resumable
+
+If DeepSeek is unreachable, retry 3× with backoff, then fail the run cleanly. The pipeline is resumable — checked tasks in `tasks.md` mark progress. Relaunch picks up at the failed phase.
+
+### TUI status from tool calls
+
+Controller activity appears as status lines generated mechanically from tool call names: "⚙ Controller: sending apply prompt...", "⚙ Controller: running review...", "⚙ Controller: approved." No extra model needed. The tool call is the structured event.
+
 ### Two-tier adapter interface
 
-The agent layer should expose one pipeline-facing contract with an optional RPC capability rather than two unrelated code paths. That lets the pipeline make one runtime type decision and keep phase logic, prompts, retry policy, and commit behavior centralized.
+The agent layer exposes one pipeline-facing contract with an optional RPC capability. The pipeline makes one runtime type decision and keeps phase logic, prompts, retry policy, and commit behavior centralized.
 
 ### Pi-first, explicit CLI fallback
 
-`pi` becomes the preferred agent because it is the only path that can preserve implementation context, switch models between steps, and recover from crashes without losing the on-disk work. CLI agents stay available, but only when the user explicitly chooses them, so nelsonctl does not silently degrade into a different agent than the one the operator intended.
+`pi` becomes the preferred agent because it preserves implementation context, switches models between steps, and recovers from crashes. CLI agents stay available when the user explicitly chooses them.
 
 ### Shared implementation session, disposable review sessions
 
-Apply and fix share context because they are two parts of the same implementation loop. Review uses a fresh session every time because the goal is independent assessment. This keeps the implementation prompt compact while preventing the reviewer from inheriting the apply session's assumptions.
-
-### Three-tier review extraction
-
-The review parser should prefer deterministic extraction over model calls. The first pass handles the expected litespec-review shape, the second catches sloppy or partial output, and the controller is reserved for ambiguous cases. This keeps cost low, makes failures explainable, and still gives the pipeline a way out when the reviewer does not follow the contract closely enough.
+Apply and fix share context because they are two parts of the same implementation loop. Review uses a fresh session every time for independent assessment.
 
 ### Config as durable state, environment for credentials
 
-The durable operator choices belong in `~/.config/nelsonctl/config.yaml`: agent, per-step models, timeouts, controller, and review policy. Credentials stay in environment variables so the config file is safe to write from `nelsonctl init`. If environment overrides for provider or model are supported, they should be treated as ephemeral process overrides rather than the primary source of truth.
+Operator choices in `~/.config/nelsonctl/config.yaml`. Credentials in environment variables. Config file is safe to version or share.
 
 ### Crash recovery from disk, not transcript restore
 
-If Pi crashes mid-phase, nelsonctl restarts Pi and re-prompts the current phase from scratch. The files are the source of truth, not the prior chat transcript. This is the simplest design that preserves work, matches the decision recorded in `BUGS.md`, and avoids introducing session-restore complexity for a rare edge case.
+If Pi crashes mid-phase, nelsonctl restarts Pi and re-prompts the current phase from scratch. Files are source of truth.
 
 ### Resume from checked tasks
 
-The pipeline should use `tasks.md` as the durable progress marker. On resume, it finds the first unchecked task, preserves any leftover tracked changes with a recovery commit, and continues from that point. This is more robust than keeping extra progress metadata and fits the litespec workflow that already centers the task checklist.
+`tasks.md` is the durable progress marker. On resume, find the first unchecked task, preserve leftover changes with a recovery commit, continue.
 
 ### Scoped staging and locking
 
-Staging only files reported by `git diff --name-only` keeps nelsonctl from accidentally committing unrelated workspace changes. A lock file in the change directory prevents overlapping runs against the same change and gives crash recovery a clear stale-lock cleanup path.
+Stage only files from `git diff --name-only`. Lock file prevents overlapping runs.
 
 ## File Changes
 
-- `cmd/nelsonctl/main.go` — load config, resolve the effective mode, wire the `init` subcommand, and route run vs setup behavior. Supports `Config File`, `Initialization Wizard`, and `Pi-First Agent Resolution`.
-- `cmd/nelsonctl/init.go` — interactive command entrypoint for first-run setup. Supports `Initialization Wizard`.
-- `internal/config/config.go` — define config structs, defaults, XDG loading, validation, and review-threshold parsing. Supports `Config File` and `Review Failure Threshold`.
-- `internal/config/wizard.go` — implement the minimal and advanced setup flows that write `~/.config/nelsonctl/config.yaml` without secrets. Supports `Initialization Wizard` and `Credential Handling`.
-- `internal/agent/adapter.go` — redefine the pipeline-facing agent contract so CLI and RPC implementations can share one orchestration layer. Supports `Two-Tier Agent Execution`, `Pi-First Agent Resolution`, and `Step Timeouts and Abort`.
-- `internal/agent/pi.go` — manage Pi process lifecycle, session creation, model switching, skill discovery, extension cancellation, and crash restart hooks. Supports `Pi RPC Sessions` and `Pi Crash Recovery`.
-- `internal/agent/rpcclient.go` — implement JSONL framing, request IDs, request-response correlation, and event fan-out for Pi stdio RPC. Supports `Pi RPC Sessions` and `Streaming Agent Output`.
-- `internal/agent/rpctypes.go` — declare typed request, response, and event payloads for Pi RPC. Supports `Pi RPC Sessions`.
-- `internal/agent/opencode.go`, `internal/agent/claude.go`, `internal/agent/codex.go`, `internal/agent/amp.go` — update the CLI adapters to satisfy the new contract while preserving the explicit fallback path. Supports `Two-Tier Agent Execution` and `Agent Prerequisite Check`.
-- `internal/pipeline/pipeline.go` — implement mode selection, branch reuse, resume logic, lock acquisition, step execution, and dry-run planning. Supports `Resumable Change Branch`, `Pi-Aware Phase Execution`, `Run Locking`, `Workspace Validation`, and `Dry-Run Plan`.
-- `internal/pipeline/phase.go` — extend task parsing so the orchestrator can resume from checked tasks and assemble phase-local task lists cleanly. Supports `Pi-Aware Phase Execution`.
-- `internal/pipeline/prompt.go` — build apply, review, fix, and steer prompts, including compact parsed-issue payloads for Pi fix steps. Supports `Independent Review Sessions` and `Parsed Retry Loop`.
-- `internal/review/parser.go` — fuzzy parser for severity headers, issue blocks, and scorecard extraction. Supports `Three-Tier Review Detection`.
-- `internal/review/heuristics.go` — fallback pattern matcher for incomplete reviewer output. Supports `Three-Tier Review Detection`.
-- `internal/review/summarizer.go` — raw HTTP controller clients for OpenAI, Anthropic, and OpenRouter. Supports `Controller Summarizer` and `Credential Handling`.
-- `internal/git/git.go` — implement branch reuse checks, recovery commits, scoped staging, and the unchanged PR flow. Supports `Resumable Change Branch` and `Recovery Commits and Scoped Staging`.
-- `internal/tui/model.go`, `internal/tui/update.go`, `internal/tui/view.go` — surface mode, active model, resume state, Pi restart events, and coalesced output in the existing two-panel UI. Supports `Execution Context Visibility`, `Pi Event Rendering`, and `Exit Summary Includes Mode`.
-- `README.md` — document Pi-first setup, `nelsonctl init`, configuration, environment variables, and explicit CLI fallback. Supports `Config File` and `Initialization Wizard`.
+- `cmd/nelsonctl/main.go` — load config, resolve effective mode, wire `init` subcommand, route run vs setup.
+- `cmd/nelsonctl/init.go` — interactive setup wizard.
+- `internal/config/config.go` — config structs, defaults, XDG loading, validation, controller and review-threshold settings.
+- `internal/config/wizard.go` — minimal and advanced setup flows.
+- `internal/controller/controller.go` — Controller interface, DeepSeek/OpenRouter implementation, tool-calling agent loop, conversation management. This is the brain of the execution phase.
+- `internal/controller/tools.go` — Tool definitions (read_file, get_diff, submit_prompt, run_review, approve), argument types, and dispatch logic.
+- `internal/controller/prompts.go` — System prompts for phase and final-review controller conversations.
+- `internal/agent/adapter.go` — pipeline-facing agent contract with optional RPC capability.
+- `internal/agent/pi.go` — Pi process lifecycle, sessions, model switching, crash recovery.
+- `internal/agent/rpcclient.go` — JSONL framing, request correlation, event fan-out for Pi stdio RPC.
+- `internal/agent/rpctypes.go` — typed RPC payloads.
+- `internal/agent/opencode.go`, `claude.go`, `codex.go`, `amp.go` — CLI adapters satisfying the new contract.
+- `internal/pipeline/pipeline.go` — state machine calling controller per phase, mechanical git/lock/resume operations.
+- `internal/pipeline/phase.go` — task parsing, resume detection from checked tasks.
+- `internal/git/git.go` — branch reuse, recovery commits, scoped staging.
+- `internal/tui/model.go`, `update.go`, `view.go` — agent output, controller status lines from tool calls, mode/model/resume visibility.
+- `README.md` — Pi-first setup, controller configuration, environment variables, CLI fallback.

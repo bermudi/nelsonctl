@@ -8,7 +8,7 @@ Meanwhile, `pi-rpc-integration` plans a Pi-first smart path with persistent sess
 
 ## Dependencies
 
-This change depends on `pi-rpc-integration` and MUST be applied after it. The pi-rpc-integration change establishes the shared agent contract (`RPCAgent` interface in `internal/agent/adapter.go`), the configuration system, the pipeline's smart-path routing, and TUI visibility. This change implements the opencode-specific adapter against those foundations.
+This change depends on `pi-rpc-integration` and MUST be applied after it. The pi-rpc-integration change establishes the shared agent contract (`RPCAgent` interface in `internal/agent/adapter.go`), the configuration system, the controller AI that drives the implementation loop, the pipeline's smart-path routing, and TUI visibility. This change implements the opencode-specific adapter against those foundations. The controller is mode-agnostic — it calls `submit_prompt` and `run_review` without knowing which agent executes them, so the opencode adapter plugs in transparently.
 
 ## Scope
 
@@ -25,7 +25,7 @@ This change depends on `pi-rpc-integration` and MUST be applied after it. The pi
 
 - Not replacing or modifying the Pi RPC adapter. Both adapters coexist behind the same agent contract owned by `pi-rpc-integration`.
 - Not using the ACP protocol or the TypeScript SDK. This change targets the HTTP server API exclusively.
-- Not adding configuration, init wizard, or review intelligence changes. Those belong to `pi-rpc-integration`.
+- Not adding configuration, init wizard, controller AI, or review intelligence changes. Those belong to `pi-rpc-integration`. The controller works with the opencode adapter without any adapter-side changes.
 - Not changing the pipeline's phase progression, branch setup, or git operations. The pipeline's smart-path routing (checking `AsRPC()` in `runPhase`) is owned by `pi-rpc-integration`; this change only implements the opencode side of that routing.
 - Not adding new TUI panels or controls. SSE events flow through pi-rpc-integration's existing `Events()` channel and visibility layer; no new TUI surfaces are introduced.
 - Not implementing structured output or slash command execution through the server API in this change. Future support would extend `occlient.go` with the `/execute` endpoint. Those are optimizations for later.
