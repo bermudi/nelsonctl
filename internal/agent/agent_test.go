@@ -49,7 +49,7 @@ func TestNewRejectsUnknownAgent(t *testing.T) {
 }
 
 func TestAdapterCheckPrerequisitesUsesPATHLookup(t *testing.T) {
-	a := newAdapter("opencode", "opencode", func(prompt string) []string {
+	a := newCLIAdapter("opencode", "opencode", func(step Step, prompt, model string, format string) []string {
 		return []string{"run", "--format", "json", prompt}
 	})
 	a.lookupPath = func(binary string) (string, error) {
@@ -108,13 +108,14 @@ func TestRunBuildsCommandsAndStreamsStdout(t *testing.T) {
 			var streamed [][]byte
 			agent := tt.newAgent(
 				WithTimeout(5*time.Second),
+				WithWorkDir("/repo"),
 				WithTerminationGracePeriod(250*time.Millisecond),
 				WithStdoutCallback(func(chunk []byte) {
 					streamed = append(streamed, append([]byte(nil), chunk...))
 				}),
 			)
 
-			impl := agent.(*adapter)
+			impl := agent.(*cliAdapter)
 			impl.lookupPath = func(binary string) (string, error) { return "/usr/bin/" + binary, nil }
 			impl.runner = func(ctx context.Context, binary string, args []string, workDir string, timeout time.Duration, terminationGrace time.Duration, stdoutCallback StreamCallback) (*Result, error) {
 				calls = append(calls, runCall{
@@ -131,9 +132,9 @@ func TestRunBuildsCommandsAndStreamsStdout(t *testing.T) {
 				return &Result{Stdout: "done", ExitCode: 0}, nil
 			}
 
-			res, err := agent.Run(context.Background(), "implement phase 2", "/repo")
+			res, err := agent.ExecuteStep(context.Background(), StepApply, "implement phase 2", "")
 			if err != nil {
-				t.Fatalf("Run() error = %v", err)
+				t.Fatalf("ExecuteStep() error = %v", err)
 			}
 			if res == nil || res.Stdout != "done" {
 				t.Fatalf("Run() result = %#v, want stdout done", res)

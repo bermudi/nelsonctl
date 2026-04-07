@@ -17,12 +17,12 @@
 - [x] Write tests for tool dispatch, agent loop lifecycle, guardrail enforcement, and API failure recovery using a mock OpenAI-compatible server
 
 ## Phase 3: Pi RPC Transport
-- [ ] Extend the agent contract to support both CLI and RPC implementations for `Two-Tier Agent Execution`
-- [ ] Implement Pi process startup, JSONL framing, request correlation, and typed RPC payloads for `Pi RPC Sessions`
-- [ ] Implement apply-session reuse, disposable review sessions, and per-step model switching for `Pi RPC Sessions`
-- [ ] Auto-discover workspace skills, disable extensions, and auto-cancel `extension_ui_request` events during Pi runs
-- [ ] Implement Pi crash restart behavior for `Pi Crash Recovery`
-- [ ] Write tests for RPC framing, session lifecycle, and crash recovery
+- [x] Extend the agent contract to support both CLI and RPC implementations for `Two-Tier Agent Execution`
+- [x] Implement Pi process startup, JSONL framing, request correlation, and typed RPC payloads for `Pi RPC Sessions`
+- [x] Implement apply-session reuse, disposable review sessions, and per-step model switching for `Pi RPC Sessions`
+- [x] Auto-discover workspace skills, disable extensions, and auto-cancel `extension_ui_request` events during Pi runs
+- [x] Implement Pi crash restart behavior for `Pi Crash Recovery`
+- [x] Write tests for RPC framing, session lifecycle, and crash recovery
 
 ## Phase 4: Pipeline Integration
 - [ ] Restructure the pipeline orchestrator to create a controller conversation per phase and delegate all prompt crafting and review analysis to the controller

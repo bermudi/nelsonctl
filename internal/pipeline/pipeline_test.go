@@ -21,9 +21,13 @@ type fakeAgent struct {
 
 func (f *fakeAgent) Name() string                                 { return "fake" }
 func (f *fakeAgent) CheckPrerequisites(ctx context.Context) error { return nil }
+func (f *fakeAgent) Cleanup(ctx context.Context) error            { return nil }
+func (f *fakeAgent) AsRPC() agent.RPCAgent                        { return nil }
+func (f *fakeAgent) Events() <-chan agent.Event                   { return nil }
 
-func (f *fakeAgent) Run(ctx context.Context, prompt string, workDir string) (*agent.Result, error) {
-	f.calls = append(f.calls, prompt+"|"+workDir)
+func (f *fakeAgent) ExecuteStep(ctx context.Context, step agent.Step, prompt, model string) (*agent.Result, error) {
+	_ = model
+	f.calls = append(f.calls, string(step)+":"+prompt)
 	idx := len(f.calls) - 1
 	if idx < len(f.errs) && f.errs[idx] != nil {
 		var res *agent.Result

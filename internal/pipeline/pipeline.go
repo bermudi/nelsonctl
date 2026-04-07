@@ -170,7 +170,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 		emitState(StateFinalReview)
 		p.waitIfPaused(ctx)
 		for attempt := 1; attempt <= p.MaxAttempts; attempt++ {
-			reviewRes, reviewErr := p.Agent.Run(ctx, FinalReviewPrompt(changeName), p.RepoDir)
+			reviewRes, reviewErr := p.Agent.ExecuteStep(ctx, agent.StepFinalReview, FinalReviewPrompt(changeName), "")
 			reviewOutput := ReviewOutput(resultText(reviewRes), errorText(reviewErr))
 			reviewExit := resultExitCode(reviewRes, reviewErr)
 			report.FinalReviewOutput = reviewOutput
@@ -180,7 +180,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 				break
 			}
 			if attempt < p.MaxAttempts {
-				fixRes, fixErr := p.Agent.Run(ctx, FixPrompt(reviewOutput), p.RepoDir)
+				fixRes, fixErr := p.Agent.ExecuteStep(ctx, agent.StepFix, FixPrompt(reviewOutput), "")
 				if fixRes != nil && fixRes.Stdout != "" {
 					p.emit(OutputEvent{Chunk: fixRes.Stdout})
 				}
@@ -225,7 +225,7 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 		report.Attempts = attempt
 		p.emit(PhaseStartEvent{Number: phase.Number, Name: phase.Name, Attempt: attempt})
 
-		applyRes, applyErr := p.Agent.Run(ctx, prompt, p.RepoDir)
+		applyRes, applyErr := p.Agent.ExecuteStep(ctx, agent.StepApply, prompt, "")
 		if applyRes != nil && applyRes.Stdout != "" {
 			p.emit(OutputEvent{Chunk: applyRes.Stdout})
 		}
@@ -239,7 +239,7 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 			continue
 		}
 
-		reviewRes, reviewErr := p.Agent.Run(ctx, ReviewPrompt(changeName), p.RepoDir)
+		reviewRes, reviewErr := p.Agent.ExecuteStep(ctx, agent.StepReview, ReviewPrompt(changeName), "")
 		reviewOutput := ReviewOutput(resultText(reviewRes), errorText(reviewErr))
 		report.ReviewOutput = reviewOutput
 		passed := ReviewPassed(reviewOutput, resultExitCode(reviewRes, reviewErr))
