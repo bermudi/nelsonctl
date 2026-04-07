@@ -25,18 +25,18 @@
 - [x] Write tests for RPC framing, session lifecycle, and crash recovery
 
 ## Phase 4: Pipeline Integration
-- [ ] Restructure the pipeline orchestrator to create a controller conversation per phase and delegate all prompt crafting and review analysis to the controller
-- [ ] Implement `submit_prompt` and `run_review` tool handlers that route to the effective agent (Pi RPC or CLI shell-out)
-- [ ] Remove `ReviewPassed()` regex detection, heuristic substring matching, and hardcoded `ApplyPrompt`/`FixPrompt`/`ReviewPrompt` templates
-- [ ] Implement the mechanical review prompt as a fixed template used by `run_review` tool handler
-- [ ] Inject `review.fail_on` threshold and phase tasks into the controller's system prompt
-- [ ] Inject attempt count ("Attempt N of M") into the controller conversation after each failed review
-- [ ] Implement branch reuse, first-unchecked-phase resume, and recovery commits for `Resumable Change Branch`
-- [ ] Add `.nelsonctl.lock` creation, stale PID cleanup, and lock release for `Run Locking`
-- [ ] Stage only changed files via `git diff --name-only` for `Recovery Commits and Scoped Staging`
-- [ ] Implement the dry-run planner for `Dry-Run Plan`
-- [ ] Wire the final pre-archive review through a fresh controller conversation scoped to the full change
-- [ ] Write tests for controller-pipeline integration, resume logic, lock handling, scoped staging, and mechanical review prompt
+- [x] Restructure the pipeline orchestrator to create a controller conversation per phase and delegate all prompt crafting and review analysis to the controller
+- [x] Implement `submit_prompt` and `run_review` tool handlers that route to the effective agent (Pi RPC or CLI shell-out)
+- [x] Remove `ReviewPassed()` regex detection, heuristic substring matching, and hardcoded `ApplyPrompt`/`FixPrompt`/`ReviewPrompt` templates
+- [x] Implement the mechanical review prompt as a fixed template used by `run_review` tool handler
+- [x] Inject `review.fail_on` threshold and phase tasks into the controller's system prompt
+- [x] Inject attempt count ("Attempt N of M") into the controller conversation after each failed review
+- [x] Implement branch reuse, first-unchecked-phase resume, and recovery commits for `Resumable Change Branch`
+- [x] Add `.nelsonctl.lock` creation, stale PID cleanup, and lock release for `Run Locking`
+- [x] Stage only changed files via `git diff --name-only` for `Recovery Commits and Scoped Staging`
+- [x] Implement the dry-run planner for `Dry-Run Plan`
+- [x] Wire the final pre-archive review through a fresh controller conversation scoped to the full change
+- [x] Write tests for controller-pipeline integration, resume logic, lock handling, scoped staging, and mechanical review prompt
 
 ## Phase 5: TUI and Operator Experience
 - [ ] Surface controller tool call activity as mechanical status lines in the TUI (switch on tool name, no parsing)

@@ -52,3 +52,21 @@ func TestParseTasksMarkdownRejectsTaskBeforePhase(t *testing.T) {
 		t.Fatal("ParseTasksMarkdown() error = nil, want error")
 	}
 }
+
+func TestRemainingPhasesStartsAtFirstUncheckedPhase(t *testing.T) {
+	phases, err := ParseTasksMarkdown(strings.NewReader("# Tasks\n\n## Phase 1: One\n- [x] done\n\n## Phase 2: Two\n- [ ] next\n\n## Phase 3: Three\n- [ ] later\n"))
+	if err != nil {
+		t.Fatalf("ParseTasksMarkdown() error = %v", err)
+	}
+	remaining := RemainingPhases(phases)
+	if len(remaining) != 2 {
+		t.Fatalf("len(RemainingPhases) = %d, want 2", len(remaining))
+	}
+	if remaining[0].Number != 2 || remaining[1].Number != 3 {
+		t.Fatalf("remaining = %+v", remaining)
+	}
+	phase, ok := FirstUncheckedPhase(phases)
+	if !ok || phase.Number != 2 {
+		t.Fatalf("FirstUncheckedPhase() = %+v, %t", phase, ok)
+	}
+}

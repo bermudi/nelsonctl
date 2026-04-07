@@ -11,19 +11,21 @@ import (
 )
 
 type DispatchResult struct {
-	Content  string
-	Approved bool
-	Summary  string
+	Content     string
+	Approved    bool
+	Summary     string
+	UserMessage string
 }
 
 type Handlers struct {
-	RepoDir       string
-	ReadFile      func(ctx context.Context, path string) (string, error)
-	GetDiff       func(ctx context.Context) (string, error)
-	SubmitPrompt  func(ctx context.Context, prompt string) (string, error)
-	RunReview     func(ctx context.Context) (string, error)
-	Approve       func(ctx context.Context, summary string) error
-	AllowAbsolute bool
+	RepoDir           string
+	ReadFile          func(ctx context.Context, path string) (string, error)
+	GetDiff           func(ctx context.Context) (string, error)
+	SubmitPrompt      func(ctx context.Context, prompt string) (string, error)
+	AfterSubmitPrompt func() string
+	RunReview         func(ctx context.Context) (string, error)
+	Approve           func(ctx context.Context, summary string) error
+	AllowAbsolute     bool
 }
 
 type Dispatcher interface {
@@ -122,7 +124,11 @@ func (d *ToolDispatcher) Dispatch(ctx context.Context, call ToolCall) (DispatchR
 		if err != nil {
 			return DispatchResult{}, fmt.Errorf("submit_prompt: %w", err)
 		}
-		return DispatchResult{Content: content}, nil
+		result := DispatchResult{Content: content}
+		if d.handlers.AfterSubmitPrompt != nil {
+			result.UserMessage = strings.TrimSpace(d.handlers.AfterSubmitPrompt())
+		}
+		return result, nil
 	case ToolRunReview:
 		var args RunReviewArgs
 		if err := decodeArgs(call.Arguments, &args); err != nil {

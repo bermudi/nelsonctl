@@ -60,6 +60,10 @@ type Message struct {
 	ToolCalls  []ToolCall
 }
 
+func UserMessage(content string) Message {
+	return Message{Role: "user", Content: strings.TrimSpace(content)}
+}
+
 type Phase struct {
 	Number int
 	Name   string
@@ -88,6 +92,7 @@ type Result struct {
 type Controller interface {
 	RunPhase(ctx context.Context, request PhaseRequest, dispatcher Dispatcher) (*Result, error)
 	RunFinalReview(ctx context.Context, request FinalReviewRequest, dispatcher Dispatcher) (*Result, error)
+	Continue(ctx context.Context, messages []Message, dispatcher Dispatcher) (*Result, error)
 }
 
 type Option func(*openAIController)
@@ -196,18 +201,28 @@ func (c *openAIController) RunFinalReview(ctx context.Context, request FinalRevi
 	return c.run(ctx, FinalReviewSystemPrompt(request), initialPrompt, dispatcher)
 }
 
+func (c *openAIController) Continue(ctx context.Context, messages []Message, dispatcher Dispatcher) (*Result, error) {
+	if len(messages) == 0 {
+		return nil, errors.New("controller continuation requires existing messages")
+	}
+	return c.runConversation(ctx, cloneMessages(messages), dispatcher)
+}
+
 func (c *openAIController) run(ctx context.Context, systemPrompt, initialPrompt string, dispatcher Dispatcher) (*Result, error) {
 	conversationCtx, cancel := context.WithTimeout(ctx, c.controllerCfg.Timeout.Std())
 	defer cancel()
 
-	messages := []Message{
+	return c.runConversation(conversationCtx, []Message{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: initialPrompt},
-	}
+	}, dispatcher)
+}
+
+func (c *openAIController) runConversation(ctx context.Context, messages []Message, dispatcher Dispatcher) (*Result, error) {
 	toolCallsUsed := 0
 
 	for {
-		assistant, err := c.complete(conversationCtx, messages)
+		assistant, err := c.complete(ctx, messages)
 		if err != nil {
 			return nil, err
 		}
@@ -227,13 +242,16 @@ func (c *openAIController) run(ctx context.Context, systemPrompt, initialPrompt 
 
 		for _, call := range assistant.ToolCalls {
 			toolCallsUsed++
-			result, err := dispatcher.Dispatch(conversationCtx, call)
+			result, err := dispatcher.Dispatch(ctx, call)
 			if err != nil {
 				return nil, err
 			}
 
 			toolMessage := Message{Role: "tool", ToolCallID: call.ID, Content: result.Content}
 			messages = append(messages, toolMessage)
+			if strings.TrimSpace(result.UserMessage) != "" {
+				messages = append(messages, UserMessage(result.UserMessage))
+			}
 
 			if result.Approved {
 				return &Result{

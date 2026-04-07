@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 // Executor runs a command in a working directory.
 type Executor interface {
 	Run(ctx context.Context, dir, name string, args ...string) error
+	Output(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 }
 
 // Client wraps git CLI operations for a repository.
@@ -42,6 +45,22 @@ func (osExecutor) Run(ctx context.Context, dir, name string, args ...string) err
 	return nil
 }
 
+func (osExecutor) Output(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed != "" {
+			return nil, fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, trimmed)
+		}
+		return nil, fmt.Errorf("%s %s failed: %w", name, strings.Join(args, " "), err)
+	}
+
+	return out, nil
+}
+
 func (c *Client) executor() Executor {
 	if c.Exec != nil {
 		return c.Exec
@@ -52,6 +71,42 @@ func (c *Client) executor() Executor {
 // IsClean returns nil when the worktree has no uncommitted changes.
 func (c *Client) IsClean(ctx context.Context) error {
 	return c.executor().Run(ctx, c.Dir, "git", "diff", "--quiet")
+}
+
+// CurrentBranch returns the checked out branch name.
+func (c *Client) CurrentBranch(ctx context.Context) (string, error) {
+	out, err := c.executor().Output(ctx, c.Dir, "git", "branch", "--show-current")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Diff returns the current uncommitted diff.
+func (c *Client) Diff(ctx context.Context) (string, error) {
+	out, err := c.executor().Output(ctx, c.Dir, "git", "diff")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// ChangedFiles returns paths from git diff --name-only.
+func (c *Client) ChangedFiles(ctx context.Context) ([]string, error) {
+	out, err := c.executor().Output(ctx, c.Dir, "git", "diff", "--name-only")
+	if err != nil {
+		return nil, err
+	}
+	return splitLines(string(out)), nil
+}
+
+// HasTrackedChanges reports whether tracked files are modified.
+func (c *Client) HasTrackedChanges(ctx context.Context) (bool, error) {
+	err := c.executor().Run(ctx, c.Dir, "git", "diff", "--quiet")
+	if err == nil {
+		return false, nil
+	}
+	return true, nil
 }
 
 // BranchExists reports whether a branch name exists in the local repo.
@@ -117,4 +172,35 @@ func (c *Client) Push(ctx context.Context, remote, branch string, setUpstream bo
 	}
 	args = append(args, remote, branch)
 	return c.executor().Run(ctx, c.Dir, "git", args...)
+}
+
+// ProcessExists reports whether pid appears to be alive.
+func ProcessExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	return true
+}
+
+func splitLines(raw string) []string {
+	lines := strings.Split(strings.TrimSpace(raw), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }

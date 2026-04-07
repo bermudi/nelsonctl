@@ -9,8 +9,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bermudi/nelsonctl/internal/agent"
+	"github.com/bermudi/nelsonctl/internal/config"
+	ctrl "github.com/bermudi/nelsonctl/internal/controller"
 )
 
 type fakeAgent struct {
@@ -26,8 +29,8 @@ func (f *fakeAgent) AsRPC() agent.RPCAgent                        { return nil }
 func (f *fakeAgent) Events() <-chan agent.Event                   { return nil }
 
 func (f *fakeAgent) ExecuteStep(ctx context.Context, step agent.Step, prompt, model string) (*agent.Result, error) {
-	_ = model
-	f.calls = append(f.calls, string(step)+":"+prompt)
+	_ = ctx
+	f.calls = append(f.calls, fmt.Sprintf("%s|%s|%s", step, model, prompt))
 	idx := len(f.calls) - 1
 	if idx < len(f.errs) && f.errs[idx] != nil {
 		var res *agent.Result
@@ -44,14 +47,41 @@ func (f *fakeAgent) ExecuteStep(ctx context.Context, step agent.Step, prompt, mo
 }
 
 type fakeGit struct {
-	calls       []string
-	cleanErr    error
-	branchExist bool
+	calls         []string
+	cleanErr      error
+	currentBranch string
+	branchExist   bool
+	changedFiles  []string
+	diff          string
+	hasTracked    bool
 }
 
 func (f *fakeGit) IsClean(ctx context.Context) error {
 	f.calls = append(f.calls, "is-clean")
 	return f.cleanErr
+}
+
+func (f *fakeGit) CurrentBranch(ctx context.Context) (string, error) {
+	f.calls = append(f.calls, "current-branch")
+	if f.currentBranch == "" {
+		return "main", nil
+	}
+	return f.currentBranch, nil
+}
+
+func (f *fakeGit) Diff(ctx context.Context) (string, error) {
+	f.calls = append(f.calls, "diff")
+	return f.diff, nil
+}
+
+func (f *fakeGit) HasTrackedChanges(ctx context.Context) (bool, error) {
+	f.calls = append(f.calls, "has-tracked")
+	return f.hasTracked, nil
+}
+
+func (f *fakeGit) ChangedFiles(ctx context.Context) ([]string, error) {
+	f.calls = append(f.calls, "changed-files")
+	return append([]string(nil), f.changedFiles...), nil
 }
 
 func (f *fakeGit) BranchExists(ctx context.Context, branch string) (bool, error) {
@@ -61,11 +91,13 @@ func (f *fakeGit) BranchExists(ctx context.Context, branch string) (bool, error)
 
 func (f *fakeGit) CreateBranch(ctx context.Context, branch string) error {
 	f.calls = append(f.calls, "branch:"+branch)
+	f.currentBranch = branch
 	return nil
 }
 
 func (f *fakeGit) Checkout(ctx context.Context, branch string) error {
 	f.calls = append(f.calls, "checkout:"+branch)
+	f.currentBranch = branch
 	return nil
 }
 
@@ -99,606 +131,228 @@ func (f *fakePR) Create(ctx context.Context, repoDir, title, bodyFile string) (s
 	return f.note, nil
 }
 
-func TestPipelineRunTransitionsAndRetries(t *testing.T) {
+type fakeController struct {
+	phaseRuns []ctrl.PhaseRequest
+	finalRuns []ctrl.FinalReviewRequest
+	phaseFn   func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error)
+	finalFn   func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error)
+}
+
+func (f *fakeController) RunPhase(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+	f.phaseRuns = append(f.phaseRuns, request)
+	if f.phaseFn != nil {
+		return f.phaseFn(ctx, request, dispatcher)
+	}
+	return &ctrl.Result{Summary: "approved"}, nil
+}
+
+func (f *fakeController) RunFinalReview(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+	f.finalRuns = append(f.finalRuns, request)
+	if f.finalFn != nil {
+		return f.finalFn(ctx, request, dispatcher)
+	}
+	return &ctrl.Result{Summary: "approved"}, nil
+}
+
+func (f *fakeController) Continue(ctx context.Context, messages []ctrl.Message, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+	return nil, fmt.Errorf("unexpected Continue call")
+}
+
+func TestPipelineRunUsesControllerAndScopedPhaseCommit(t *testing.T) {
 	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "initial-scaffold")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n\n## Phase 2: Adapter\n- [ ] Task two\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal body\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
+	changeDir := filepath.Join(tmp, "specs", "changes", "initial-scaffold")
+	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n")
+	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
 
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied phase 1"},
-		{Stdout: "issues found: please fix"},
-		{Stdout: "applied phase 1 fix"},
-		{Stdout: "no issues found"},
-		{Stdout: "applied phase 2"},
-		{Stdout: "looks good"},
-		{Stdout: "final review: no issues found"},
+	fa := &fakeAgent{results: []agent.Result{{Stdout: "apply ok"}, {Stdout: "review ok"}}}
+	git := &fakeGit{changedFiles: []string{"internal/pipeline/pipeline.go"}, diff: "diff --git a/file b/file"}
+	pr := &fakePR{note: "created"}
+	controller := &fakeController{phaseFn: func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+		if request.ReviewFailOn != config.FailOnWarning {
+			t.Fatalf("ReviewFailOn = %q", request.ReviewFailOn)
+		}
+		if len(request.Phase.Tasks) != 1 || request.Phase.Tasks[0] != "Task one" {
+			t.Fatalf("phase tasks = %#v", request.Phase.Tasks)
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "1", Name: ctrl.ToolSubmitPrompt, Arguments: []byte(`{"prompt":"apply this phase"}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "2", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)})
+		if err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{Summary: approve.Summary}, nil
+	}, finalFn: func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)})
+		if err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{Summary: approve.Summary}, nil
 	}}
-	git := &fakeGit{}
-	pr := &fakePR{note: "gh unavailable; manual instructions"}
 
-	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
+	p := &Pipeline{ChangePath: changeDir, RepoDir: tmp, Agent: fa, Controller: controller, Git: git, PR: pr, MaxAttempts: 3, Config: config.Config{Review: config.ReviewConfig{FailOn: config.FailOnWarning}, Steps: config.DefaultConfig().Steps}, processExists: func(pid int) bool { return false }, now: func() time.Time { return time.Unix(1, 0) }}
 	report, err := p.Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-
-	wantStates := []State{StateInit, StateBranch, StateCommitArtifacts, StatePhaseLoop, StateFinalReview, StatePR, StateDone}
-	if !reflect.DeepEqual(report.States, wantStates) {
-		t.Fatalf("States = %#v, want %#v", report.States, wantStates)
+	if !report.FinalReviewPassed || len(report.Phases) != 1 || !report.Phases[0].Passed {
+		t.Fatalf("unexpected report: %#v", report)
 	}
-
-	if report.ChangeName != "initial-scaffold" {
-		t.Fatalf("ChangeName = %q, want initial-scaffold", report.ChangeName)
+	if len(controller.phaseRuns) != 1 || len(controller.finalRuns) != 1 {
+		t.Fatalf("controller runs phase=%d final=%d", len(controller.phaseRuns), len(controller.finalRuns))
 	}
-	if report.BranchName != "change/initial-scaffold" {
-		t.Fatalf("BranchName = %q, want change/initial-scaffold", report.BranchName)
-	}
-	if len(report.Phases) != 2 {
-		t.Fatalf("len(Phases) = %d, want 2", len(report.Phases))
-	}
-	if got, want := report.Phases[0].Attempts, 2; got != want {
-		t.Fatalf("phase1 Attempts = %d, want %d", got, want)
-	}
-	if !report.Phases[0].Passed {
-		t.Fatalf("phase1 Passed = false, want true")
-	}
-	if got, want := report.Phases[1].Attempts, 1; got != want {
-		t.Fatalf("phase2 Attempts = %d, want %d", got, want)
-	}
-	if !report.Phases[1].Passed {
-		t.Fatalf("phase2 Passed = false, want true")
-	}
-	if !report.FinalReviewPassed {
-		t.Fatalf("FinalReviewPassed = false, want true")
-	}
-	if pr.call != changeDir+"|initial-scaffold|"+filepath.Join(changeDir, "proposal.md") {
-		t.Fatalf("PR call = %q", pr.call)
-	}
-
 	wantGitCalls := []string{
-		"is-clean",
+		"current-branch",
 		"branch-exists:change/initial-scaffold",
+		"is-clean",
 		"branch:change/initial-scaffold",
+		"has-tracked",
 		"add-all",
-		"commit:chore: add litespec artifacts for initial-scaffold|Planning artifacts for initial-scaffold\n\nPhase 1: Foundation\nPhase 2: Adapter",
-		"add-all",
+		"commit:chore: add litespec artifacts for initial-scaffold|Planning artifacts for initial-scaffold\n\nPhase 1: Foundation",
+		"changed-files",
+		"add:internal/pipeline/pipeline.go",
 		"commit:feat(initial-scaffold): complete phase 1 - Foundation|Phase 1: Foundation\n- [x] Task one",
-		"add-all",
-		"commit:feat(initial-scaffold): complete phase 2 - Adapter|Phase 2: Adapter\n- [x] Task two",
 		"push:origin|change/initial-scaffold|true",
 	}
 	if !reflect.DeepEqual(git.calls, wantGitCalls) {
 		t.Fatalf("git.calls = %#v, want %#v", git.calls, wantGitCalls)
 	}
-
-	if got, want := len(fa.calls), 7; got != want {
+	if got, want := len(fa.calls), 3; got != want {
 		t.Fatalf("len(agent.calls) = %d, want %d", got, want)
 	}
-	if !strings.Contains(fa.calls[0], "litespec-apply skill") || !strings.Contains(fa.calls[1], "litespec-review skill") {
-		t.Fatalf("agent prompts not constructed as expected: %#v", fa.calls[:2])
+	if !strings.Contains(fa.calls[0], "apply|minimax/minimax-m2.7|apply this phase") {
+		t.Fatalf("unexpected apply call: %q", fa.calls[0])
+	}
+	if !strings.Contains(fa.calls[1], "review|moonshotai/kimi-k2.5|Use your litespec-review skill") {
+		t.Fatalf("unexpected review call: %q", fa.calls[1])
+	}
+	if !strings.Contains(fa.calls[2], "final_review|moonshotai/kimi-k2.5|Use your litespec-review skill in pre-archive mode") {
+		t.Fatalf("unexpected final review call: %q", fa.calls[2])
 	}
 }
 
-func TestPipelineDirtyWorktreeAborts(t *testing.T) {
+func TestPipelineResumeCreatesRecoveryCommitAndStartsAtFirstUncheckedPhase(t *testing.T) {
 	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "initial-scaffold")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
+	changeDir := filepath.Join(tmp, "specs", "changes", "resume-test")
+	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: One\n- [x] done\n\n## Phase 2: Two\n- [ ] next\n")
+	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
 
-	git := &fakeGit{cleanErr: fmt.Errorf("dirty worktree")}
-	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: &fakeAgent{}, Git: git, MaxAttempts: 3}
+	fa := &fakeAgent{results: []agent.Result{{Stdout: "apply ok"}, {Stdout: "review ok"}, {Stdout: "final ok"}}}
+	git := &fakeGit{currentBranch: "change/resume-test", branchExist: true, changedFiles: []string{"file.go"}, hasTracked: true}
+	controller := &fakeController{phaseFn: func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+		if request.Phase.Number != 2 {
+			t.Fatalf("phase number = %d, want 2", request.Phase.Number)
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "1", Name: ctrl.ToolSubmitPrompt, Arguments: []byte(`{"prompt":"resume phase"}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "2", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"ok"}`)}); err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{Summary: "ok"}, nil
+	}, finalFn: func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final"}`)}); err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{Summary: "final"}, nil
+	}}
+
+	p := &Pipeline{ChangePath: changeDir, RepoDir: tmp, Agent: fa, Controller: controller, Git: git, PR: &fakePR{}, MaxAttempts: 3, Config: config.Config{Review: config.ReviewConfig{FailOn: config.FailOnCritical}, Steps: config.DefaultConfig().Steps}, processExists: func(pid int) bool { return false }, now: time.Now}
+	report, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !report.Resumed {
+		t.Fatal("Resumed = false, want true")
+	}
+	for _, want := range []string{"has-tracked", "add:file.go", "commit:chore: recovery commit|Preserve resumable tracked work before continuing the controller pipeline."} {
+		if !containsCall(git.calls, want) {
+			t.Fatalf("git.calls missing %q in %#v", want, git.calls)
+		}
+	}
+	if containsCallPrefix(git.calls, "add-all") {
+		t.Fatalf("unexpected artifacts commit on resume: %#v", git.calls)
+	}
+}
+
+func TestPipelineRefusesDirtyUnrelatedBranch(t *testing.T) {
+	tmp := t.TempDir()
+	changeDir := filepath.Join(tmp, "specs", "changes", "dirty-test")
+	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: One\n- [ ] todo\n")
+
+	p := &Pipeline{ChangePath: changeDir, RepoDir: tmp, Agent: &fakeAgent{}, Controller: &fakeController{}, Git: &fakeGit{currentBranch: "main", branchExist: true, cleanErr: fmt.Errorf("dirty")}, Config: config.Config{Steps: config.DefaultConfig().Steps}, processExists: func(pid int) bool { return false }, now: time.Now}
 	_, err := p.Run(context.Background())
-	if err == nil {
-		t.Fatal("Run() error = nil, want error for dirty worktree")
-	}
-	if !strings.Contains(err.Error(), "uncommitted changes") {
-		t.Fatalf("Run() error = %q, want uncommitted changes message", err.Error())
-	}
-}
-
-func TestPipelineBranchExistsDeclineAborts(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "initial-scaffold")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-
-	git := &fakeGit{branchExist: true}
-	p := &Pipeline{
-		ChangePath:  changeDir,
-		RepoDir:     changeDir,
-		Agent:       &fakeAgent{},
-		Git:         git,
-		MaxAttempts: 3,
-		Confirm:     func(prompt string) bool { return false },
-	}
-	_, err := p.Run(context.Background())
-	if err == nil {
-		t.Fatal("Run() error = nil, want error when declining branch reuse")
-	}
-	if !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("Run() error = %q, want branch exists message", err.Error())
-	}
-}
-
-func TestPipelineBranchExistsAcceptReuses(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "initial-scaffold")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
-
-	git := &fakeGit{branchExist: true}
-	pr := &fakePR{}
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied"},
-		{Stdout: "no issues found"},
-		{Stdout: "final review: no issues found"},
-	}}
-	p := &Pipeline{
-		ChangePath:  changeDir,
-		RepoDir:     changeDir,
-		Agent:       fa,
-		Git:         git,
-		PR:          pr,
-		MaxAttempts: 3,
-		Confirm:     func(prompt string) bool { return true },
-	}
-	report, err := p.Run(context.Background())
-	if err != nil {
+	if err == nil || !strings.Contains(err.Error(), "unrelated branch") {
 		t.Fatalf("Run() error = %v", err)
 	}
-	for _, call := range git.calls {
-		if strings.HasPrefix(call, "branch:") {
-			t.Fatalf("should not create branch when reusing, got call: %s", call)
-		}
-	}
-	var checkedOut bool
-	for _, call := range git.calls {
-		if call == "checkout:change/initial-scaffold" {
-			checkedOut = true
-		}
-	}
-	if !checkedOut {
-		t.Fatal("expected checkout:change/initial-scaffold call when reusing branch")
-	}
-	if !report.FinalReviewPassed {
-		t.Fatal("FinalReviewPassed = false, want true")
-	}
 }
 
-func TestPipelineMaxRetriesEmitsTaunt(t *testing.T) {
+func TestPipelineLockHandling(t *testing.T) {
 	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "taunt-test")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
+	p := &Pipeline{processExists: func(pid int) bool { return pid == 123 }, now: func() time.Time { return time.Unix(2, 0) }}
+	lockPath := filepath.Join(tmp, ".nelsonctl.lock")
+	mustWriteFile(t, lockPath, `{"pid":123,"timestamp":"2026-01-01T00:00:00Z"}`)
+	if _, err := p.acquireLock(lockPath); err == nil || !strings.Contains(err.Error(), "already in progress") {
+		t.Fatalf("acquireLock() error = %v", err)
 	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
-
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied"},
-		{Stdout: "issues found: fix this"},
-		{Stdout: "applied fix"},
-		{Stdout: "issues found: still broken"},
-		{Stdout: "applied fix again"},
-		{Stdout: "issues found: persistent failure"},
-	}}
-	git := &fakeGit{}
-	pr := &fakePR{}
-
-	var events []Event
-	p := &Pipeline{
-		ChangePath:  changeDir,
-		RepoDir:     changeDir,
-		Agent:       fa,
-		Git:         git,
-		PR:          pr,
-		MaxAttempts: 3,
-		OnEvent: func(msg Event) {
-			events = append(events, msg)
-		},
-	}
-	report, err := p.Run(context.Background())
+	mustWriteFile(t, lockPath, `{"pid":999,"timestamp":"2026-01-01T00:00:00Z"}`)
+	unlock, err := p.acquireLock(lockPath)
 	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+		t.Fatalf("acquireLock() stale error = %v", err)
 	}
-	if report.Phases[0].Passed {
-		t.Fatal("phase 1 should not pass after max retries with persistent failures")
+	if err := unlock(); err != nil {
+		t.Fatalf("unlock() error = %v", err)
 	}
-	if report.Phases[0].Attempts != 3 {
-		t.Fatalf("Attempts = %d, want 3", report.Phases[0].Attempts)
-	}
-
-	var tauntFound bool
-	for _, e := range events {
-		if _, ok := e.(TauntEvent); ok {
-			tauntFound = true
-			break
-		}
-	}
-	if !tauntFound {
-		t.Fatal("no TauntEvent emitted after max retries exhausted")
-	}
-
-	// Pipeline should NOT push or create PR when a phase failed.
-	for _, call := range git.calls {
-		if strings.HasPrefix(call, "push:") {
-			t.Fatal("pipeline should not push after phase failure")
-		}
-	}
-	if pr.call != "" {
-		t.Fatal("pipeline should not create PR after phase failure")
-	}
-	if report.FinalReviewPassed {
-		t.Fatal("FinalReviewPassed should be false when phases failed")
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("lock file should be removed, stat err = %v", err)
 	}
 }
 
-func TestPipelineFinalReviewRetriesOnFailure(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "final-review-test")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
+func TestMechanicalReviewPrompt(t *testing.T) {
+	if got := MechanicalReviewPrompt("demo", false); !strings.Contains(got, "Use your litespec-review skill to review the implementation of change demo") {
+		t.Fatalf("MechanicalReviewPrompt(false) = %q", got)
 	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
-
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied"},
-		{Stdout: "no issues found"},
-		{Stdout: "issues found: final problems"},
-		{Stdout: "applied fix"},
-		{Stdout: "no issues found"},
-	}}
-	git := &fakeGit{}
-	pr := &fakePR{}
-
-	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
-	report, err := p.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !report.FinalReviewPassed {
-		t.Fatal("FinalReviewPassed = false, want true after retry")
-	}
-	if got, want := len(fa.calls), 5; got != want {
-		t.Fatalf("len(agent.calls) = %d, want %d (apply, review, final-review, fix, final-review)", got, want)
+	if got := MechanicalReviewPrompt("demo", true); !strings.Contains(got, "pre-archive mode") {
+		t.Fatalf("MechanicalReviewPrompt(true) = %q", got)
 	}
 }
 
-func TestPipelineEmitsSummaryEvent(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "summary-test")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
-
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied"},
-		{Stdout: "no issues found"},
-		{Stdout: "final review: no issues found"},
-	}}
-	git := &fakeGit{}
-	pr := &fakePR{}
-
-	var events []Event
-	p := &Pipeline{
-		ChangePath:  changeDir,
-		RepoDir:     changeDir,
-		Agent:       fa,
-		Git:         git,
-		PR:          pr,
-		MaxAttempts: 3,
-		OnEvent: func(msg Event) {
-			events = append(events, msg)
-		},
-	}
-	_, err := p.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	var summary *SummaryEvent
-	for _, e := range events {
-		if s, ok := e.(SummaryEvent); ok {
-			summary = &s
-			break
-		}
-	}
-	if summary == nil {
-		t.Fatal("no SummaryEvent emitted")
-	}
-	if summary.PhasesCompleted != 1 {
-		t.Fatalf("PhasesCompleted = %d, want 1", summary.PhasesCompleted)
-	}
-	if summary.PhasesFailed != 0 {
-		t.Fatalf("PhasesFailed = %d, want 0", summary.PhasesFailed)
-	}
-	if summary.Branch != "change/summary-test" {
-		t.Fatalf("Branch = %q, want change/summary-test", summary.Branch)
-	}
-	if summary.Duration == "" {
-		t.Fatal("Duration is empty")
-	}
-}
-
-func TestReviewPassed(t *testing.T) {
-	tests := []struct {
-		name     string
-		output   string
-		exitCode int
-		want     bool
-	}{
-		{name: "failure output", output: "issues found: fix this", exitCode: 0, want: false},
-		{name: "non-zero exit", output: "anything", exitCode: 1, want: false},
-		{name: "ambiguous pass", output: "looks fine", exitCode: 0, want: true},
-		{name: "mixed negative wins", output: "no issues found but failed", exitCode: 0, want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ReviewPassed(tt.output, tt.exitCode); got != tt.want {
-				t.Fatalf("ReviewPassed() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestPromptConstruction(t *testing.T) {
-	phase := Phase{Number: 1, Name: "Foundation", Tasks: []Task{{Text: "Initialize module"}, {Text: "Set up structure"}}}
-
-	if got := ApplyPrompt("initial-scaffold", phase); !strings.Contains(got, "litespec-apply skill") || !strings.Contains(got, "specs/changes/initial-scaffold/proposal.md") || !strings.Contains(got, "Initialize module") {
-		t.Fatalf("ApplyPrompt() = %q", got)
-	}
-	if got := ReviewPrompt("initial-scaffold"); !strings.Contains(got, "litespec-review skill") || !strings.Contains(got, "specs/changes/initial-scaffold/proposal.md") {
-		t.Fatalf("ReviewPrompt() = %q", got)
-	}
-	if got := FixPrompt("issues found"); !strings.Contains(got, "The review found these issues: issues found. Fix them.") {
-		t.Fatalf("FixPrompt() = %q", got)
-	}
-	if got := FinalReviewPrompt("initial-scaffold"); !strings.Contains(got, "litespec-review skill") || !strings.Contains(got, "pre-archive mode") {
-		t.Fatalf("FinalReviewPrompt() = %q", got)
-	}
-}
-
-func TestPipelineContextCancellation(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "cancel-test")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	fa := &fakeAgent{}
-	git := &fakeGit{}
-	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, MaxAttempts: 3}
-	_, err := p.Run(ctx)
-	if err == nil {
-		t.Fatal("Run() error = nil, want context canceled error")
-	}
-	if !strings.Contains(err.Error(), "context canceled") {
-		t.Fatalf("Run() error = %q, want context canceled", err.Error())
-	}
-}
-
-func TestPipelinePhaseFailureStopsSubsequentPhases(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "stop-test")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n\n## Phase 2: Adapter\n- [ ] Task two\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
-
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied"},
-		{Stdout: "issues found: broken"},
-		{Stdout: "applied fix"},
-		{Stdout: "issues found: still broken"},
-		{Stdout: "applied fix 2"},
-		{Stdout: "issues found: persistent"},
-	}}
-	git := &fakeGit{}
-	pr := &fakePR{}
-
-	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
-	report, err := p.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	// Only phase 1 should be attempted; phase 2 should not run.
-	if got := len(report.Phases); got != 1 {
-		t.Fatalf("len(Phases) = %d, want 1 (phase 2 should not execute after phase 1 failure)", got)
-	}
-	if report.Phases[0].Passed {
-		t.Fatal("phase 1 should have failed")
-	}
-}
-
-func TestPipelineNoCommitOnFailedPhase(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "no-commit-test")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
-
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied"},
-		{Stdout: "issues found: broken"},
-		{Stdout: "applied fix"},
-		{Stdout: "issues found: still broken"},
-		{Stdout: "applied fix 2"},
-		{Stdout: "issues found: persistent"},
-	}}
-	git := &fakeGit{}
-	pr := &fakePR{}
-
-	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
-	_, err := p.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	// The only commit should be the artifacts commit; no phase commit.
-	var commitCount int
-	for _, call := range git.calls {
-		if strings.HasPrefix(call, "commit:feat(") {
-			commitCount++
-		}
-	}
-	if commitCount != 0 {
-		t.Fatalf("expected 0 phase commits on failure, got %d", commitCount)
-	}
-}
-
-func TestReviewPassedStructuredMarkers(t *testing.T) {
-	tests := []struct {
-		name   string
-		output string
-		want   bool
-	}{
-		{name: "pass marker", output: "some review text\npass", want: true},
-		{name: "PASS marker", output: "review\nPASS", want: true},
-		{name: "lgtm marker", output: "looks fine\nlgtm", want: true},
-		{name: "approved marker", output: "all good\napproved", want: true},
-		{name: "fail marker", output: "some review text\nfail", want: false},
-		{name: "rejected marker", output: "problems found\nrejected", want: false},
-		{name: "blocked marker", output: "cannot merge\nblocked", want: false},
-		{name: "marker with trailing whitespace", output: "review\n  pass  \n", want: true},
-		{name: "marker overrides heuristic", output: "issues found: something\npass", want: true},
-		{name: "fail marker overrides ambiguous", output: "looks fine\nfail", want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ReviewPassed(tt.output, 0); got != tt.want {
-				t.Fatalf("ReviewPassed(%q, 0) = %v, want %v", tt.output, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestReviewPassedNegativePhrasesCheckedFirst(t *testing.T) {
-	tests := []struct {
-		name   string
-		output string
-		want   bool
-	}{
-		{name: "failed overrides no issues found", output: "no issues found but build failed", want: false},
-		{name: "blocking overrides no issues found", output: "no issues found but blocking concern", want: false},
-		{name: "needs work overrides no issues found", output: "no issues found but needs work", want: false},
-		{name: "failure overrides no issues found", output: "no issues found, failure detected", want: false},
-		{name: "issues found without no prefix is failure", output: "issues found: broken things", want: false},
-		{name: "no issues found alone is pass", output: "no issues found", want: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ReviewPassed(tt.output, 0); got != tt.want {
-				t.Fatalf("ReviewPassed(%q, 0) = %v, want %v", tt.output, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestPipelineFinalReviewFailureBlocksPushAndPR(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "final-block-test")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
-
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied"},
-		{Stdout: "no issues found"},
-		{Stdout: "issues found: final problems"},
-		{Stdout: "applied fix"},
-		{Stdout: "issues found: still broken"},
-		{Stdout: "applied fix again"},
-		{Stdout: "issues found: persistent failure"},
-	}}
-	git := &fakeGit{}
-	pr := &fakePR{}
-
-	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
-	report, err := p.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if report.FinalReviewPassed {
-		t.Fatal("FinalReviewPassed = true, want false after all final review attempts fail")
-	}
-	for _, call := range git.calls {
-		if strings.HasPrefix(call, "push:") {
-			t.Fatal("pipeline should not push when final review fails")
-		}
-	}
-	if pr.call != "" {
-		t.Fatal("pipeline should not create PR when final review fails")
-	}
-}
-
-func TestPipelineApplyNonZeroExitCodeTreatedAsFailure(t *testing.T) {
-	tmp := t.TempDir()
-	changeDir := filepath.Join(tmp, "exit-code-test")
-	if err := writeFile(filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n"); err != nil {
-		t.Fatalf("write tasks: %v", err)
-	}
-	if err := writeFile(filepath.Join(changeDir, "proposal.md"), "proposal\n"); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
-
-	fa := &fakeAgent{results: []agent.Result{
-		{Stdout: "applied with errors", ExitCode: 1},
-		{Stdout: "applied fix"},
-		{Stdout: "no issues found"},
-		{Stdout: "final review: no issues found"},
-	}}
-	git := &fakeGit{}
-	pr := &fakePR{}
-
-	p := &Pipeline{ChangePath: changeDir, RepoDir: changeDir, Agent: fa, Git: git, PR: pr, MaxAttempts: 3}
-	report, err := p.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !report.Phases[0].Passed {
-		t.Fatal("phase should pass after fix despite initial non-zero exit code")
-	}
-	if got, want := report.Phases[0].Attempts, 2; got != want {
-		t.Fatalf("Attempts = %d, want %d (apply fail + fix+review pass)", got, want)
-	}
-	if !report.FinalReviewPassed {
-		t.Fatal("FinalReviewPassed = false, want true")
-	}
-}
-
-func writeFile(path, content string) error {
+func mustWriteFile(t *testing.T, path, content string) {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		t.Fatalf("mkdir %s: %v", path, err)
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func containsCall(calls []string, want string) bool {
+	for _, call := range calls {
+		if call == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsCallPrefix(calls []string, prefix string) bool {
+	for _, call := range calls {
+		if strings.HasPrefix(call, prefix) {
+			return true
+		}
+	}
+	return false
 }

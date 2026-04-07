@@ -12,6 +12,7 @@ import (
 
 	"github.com/bermudi/nelsonctl/internal/agent"
 	"github.com/bermudi/nelsonctl/internal/config"
+	"github.com/bermudi/nelsonctl/internal/controller"
 	"github.com/bermudi/nelsonctl/internal/git"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
 	"github.com/bermudi/nelsonctl/internal/tui"
@@ -24,6 +25,8 @@ type options struct {
 	noPR      bool
 	verbose   bool
 }
+
+var newController = controller.New
 
 // runCLI parses flags and executes nelsonctl.
 func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -65,7 +68,18 @@ func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, std
 		return 0
 	}
 
-	agentOptions := []agent.Option{agent.WithTimeout(cfg.EffectiveTimeout())}
+	agentOptions := []agent.Option{
+		agent.WithTimeout(cfg.EffectiveTimeout()),
+		agent.WithWorkDir(cwd),
+		agent.WithStepModel(agent.StepApply, cfg.Steps.Apply.Model),
+		agent.WithStepModel(agent.StepReview, cfg.Steps.Review.Model),
+		agent.WithStepModel(agent.StepFinalReview, cfg.Steps.Review.Model),
+		agent.WithStepModel(agent.StepFix, cfg.Steps.Fix.Model),
+		agent.WithStepTimeout(agent.StepApply, cfg.Steps.Apply.Timeout.Std()),
+		agent.WithStepTimeout(agent.StepReview, cfg.Steps.Review.Timeout.Std()),
+		agent.WithStepTimeout(agent.StepFinalReview, cfg.Steps.Review.Timeout.Std()),
+		agent.WithStepTimeout(agent.StepFix, cfg.Steps.Fix.Timeout.Std()),
+	}
 	if opts.verbose {
 		agentOptions = append(agentOptions, agent.WithStdoutCallback(func(chunk []byte) {
 			_, _ = stdout.Write(chunk)
@@ -81,9 +95,18 @@ func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, std
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	defer func() { _ = agentClient.Cleanup(context.Background()) }()
+
+	controllerClient, err := newController(cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 
 	gitClient := git.NewClient(cwd)
 	p := pipeline.New(absChangePath, cwd, agentClient, gitClient)
+	p.Controller = controllerClient
+	p.Config = cfg
 
 	if !opts.noPR {
 		p.PR = pipeline.NewGHClient()
@@ -173,6 +196,8 @@ func printDryRun(stdout io.Writer, changeArg, absChangePath string, cfg config.C
 	}
 
 	branch := "change/" + filepath.Base(filepath.Clean(absChangePath))
+	remaining := pipeline.RemainingPhases(phases)
+	resumed := len(remaining) != len(phases)
 	fmt.Fprintf(stdout, "Dry run for %s\n", changeArg)
 	fmt.Fprintf(stdout, "Mode: %s\n", resolved.Mode)
 	fmt.Fprintf(stdout, "Agent: %s\n", resolved.Name)
@@ -181,10 +206,8 @@ func printDryRun(stdout io.Writer, changeArg, absChangePath string, cfg config.C
 	fmt.Fprintf(stdout, "Fix model: %s\n", cfg.Steps.Fix.Model)
 	fmt.Fprintf(stdout, "Review fail_on: %s\n", cfg.Review.FailOn)
 	fmt.Fprintf(stdout, "Branch: %s\n", branch)
-	for _, phase := range phases {
-		if phaseDone(phase) {
-			continue
-		}
+	fmt.Fprintf(stdout, "Resume: %t\n", resumed)
+	for _, phase := range remaining {
 		fmt.Fprintf(stdout, "\nPhase %d: %s\n", phase.Number, phase.Name)
 		for _, task := range phase.Tasks {
 			marker := " "
@@ -195,18 +218,6 @@ func printDryRun(stdout io.Writer, changeArg, absChangePath string, cfg config.C
 		}
 	}
 	return nil
-}
-
-func phaseDone(phase pipeline.Phase) bool {
-	if len(phase.Tasks) == 0 {
-		return false
-	}
-	for _, task := range phase.Tasks {
-		if !task.Done {
-			return false
-		}
-	}
-	return true
 }
 
 func printRunSummary(stdout io.Writer, report *pipeline.Report) {

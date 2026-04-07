@@ -14,7 +14,7 @@ func TestPhaseSystemPromptIncludesThresholdTasksAndTools(t *testing.T) {
 		Phase:        Phase{Number: 2, Name: "Controller AI", Tasks: []string{"Define tools", "Implement loop"}},
 	})
 
-	for _, want := range []string{"phase 2 (Controller AI)", "review.fail_on: warning", "Define tools", "Implement loop", "read_file", "get_diff", "submit_prompt", "run_review", "approve"} {
+	for _, want := range []string{"phase 2 (Controller AI)", "review.fail_on: warning", "Only treat findings at or above this threshold as blocking.", "Define tools", "Implement loop", "read_file", "get_diff", "submit_prompt", "run_review", "approve"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q in %q", want, prompt)
 		}

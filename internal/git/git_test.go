@@ -15,9 +15,10 @@ type commandCall struct {
 }
 
 type fakeExecutor struct {
-	calls []commandCall
-	err   error
-	byArg map[string]error
+	calls       []commandCall
+	err         error
+	byArg       map[string]error
+	outputByArg map[string][]byte
 }
 
 func (f *fakeExecutor) Run(ctx context.Context, dir, name string, args ...string) error {
@@ -33,6 +34,26 @@ func (f *fakeExecutor) Run(ctx context.Context, dir, name string, args ...string
 		}
 	}
 	return f.err
+}
+
+func (f *fakeExecutor) Output(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, commandCall{
+		dir:  dir,
+		name: name,
+		args: append([]string(nil), args...),
+	})
+	key := strings.Join(args, " ")
+	if f.byArg != nil {
+		if err, ok := f.byArg[key]; ok {
+			return nil, err
+		}
+	}
+	if f.outputByArg != nil {
+		if out, ok := f.outputByArg[key]; ok {
+			return out, nil
+		}
+	}
+	return nil, f.err
 }
 
 func TestClientBuildsGitCommands(t *testing.T) {
@@ -84,6 +105,43 @@ func TestClientBuildsGitCommands(t *testing.T) {
 
 	if got := fake.calls; !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls = %#v, want %#v", got, want)
+	}
+}
+
+func TestClientReportsBranchDiffAndChangedFiles(t *testing.T) {
+	fake := &fakeExecutor{outputByArg: map[string][]byte{
+		"branch --show-current": []byte("change/demo\n"),
+		"diff":                  []byte("diff --git a/file b/file\n"),
+		"diff --name-only":      []byte("file1.go\nfile2.go\n"),
+	}}
+	client := &Client{Dir: "/repo", Exec: fake}
+	ctx := context.Background()
+
+	branch, err := client.CurrentBranch(ctx)
+	if err != nil || branch != "change/demo" {
+		t.Fatalf("CurrentBranch() = %q, %v", branch, err)
+	}
+	diff, err := client.Diff(ctx)
+	if err != nil || !strings.Contains(diff, "diff --git") {
+		t.Fatalf("Diff() = %q, %v", diff, err)
+	}
+	files, err := client.ChangedFiles(ctx)
+	if err != nil {
+		t.Fatalf("ChangedFiles() error = %v", err)
+	}
+	if !reflect.DeepEqual(files, []string{"file1.go", "file2.go"}) {
+		t.Fatalf("ChangedFiles() = %#v", files)
+	}
+}
+
+func TestHasTrackedChanges(t *testing.T) {
+	client := &Client{Dir: "/repo", Exec: &fakeExecutor{byArg: map[string]error{"diff --quiet": errors.New("dirty")}}}
+	hasChanges, err := client.HasTrackedChanges(context.Background())
+	if err != nil {
+		t.Fatalf("HasTrackedChanges() error = %v", err)
+	}
+	if !hasChanges {
+		t.Fatal("HasTrackedChanges() = false, want true")
 	}
 }
 

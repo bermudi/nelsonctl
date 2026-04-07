@@ -9,12 +9,49 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bermudi/nelsonctl/internal/config"
+	"github.com/bermudi/nelsonctl/internal/controller"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
 	"github.com/bermudi/nelsonctl/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+type stubController struct{}
+
+func (stubController) RunPhase(ctx context.Context, request controller.PhaseRequest, dispatcher controller.Dispatcher) (*controller.Result, error) {
+	if _, err := dispatcher.Dispatch(ctx, controller.ToolCall{ID: "1", Name: controller.ToolSubmitPrompt, Arguments: []byte(`{"prompt":"apply"}`)}); err != nil {
+		return nil, err
+	}
+	if _, err := dispatcher.Dispatch(ctx, controller.ToolCall{ID: "2", Name: controller.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+		return nil, err
+	}
+	if _, err := dispatcher.Dispatch(ctx, controller.ToolCall{ID: "3", Name: controller.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)}); err != nil {
+		return nil, err
+	}
+	return &controller.Result{Summary: "phase passed"}, nil
+}
+
+func (stubController) RunFinalReview(ctx context.Context, request controller.FinalReviewRequest, dispatcher controller.Dispatcher) (*controller.Result, error) {
+	if _, err := dispatcher.Dispatch(ctx, controller.ToolCall{ID: "4", Name: controller.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+		return nil, err
+	}
+	if _, err := dispatcher.Dispatch(ctx, controller.ToolCall{ID: "5", Name: controller.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)}); err != nil {
+		return nil, err
+	}
+	return &controller.Result{Summary: "final passed"}, nil
+}
+
+func (stubController) Continue(ctx context.Context, messages []controller.Message, dispatcher controller.Dispatcher) (*controller.Result, error) {
+	return nil, nil
+}
+
 func TestRunCLIWithMockAgent(t *testing.T) {
+	oldNewController := newController
+	newController = func(cfg config.Config, opts ...controller.Option) (controller.Controller, error) {
+		return stubController{}, nil
+	}
+	defer func() { newController = oldNewController }()
+
 	repoRoot := t.TempDir()
 	changeDir := filepath.Join(repoRoot, "specs", "changes", "initial-scaffold")
 	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Initialize Go module\n\n## Phase 2: Adapter\n- [ ] Wire adapter\n")
@@ -136,7 +173,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	}
 
 	agentLogData := mustReadFile(t, agentLog)
-	for _, want := range []string{"litespec-apply skill", "litespec-review skill", "pre-archive mode"} {
+	for _, want := range []string{"apply", "litespec-review skill", "pre-archive mode"} {
 		if !strings.Contains(agentLogData, want) {
 			t.Fatalf("agent log missing %q in %q", want, agentLogData)
 		}
@@ -161,6 +198,12 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 }
 
 func TestRunCLIDryRunSkipsExecution(t *testing.T) {
+	oldNewController := newController
+	newController = func(cfg config.Config, opts ...controller.Option) (controller.Controller, error) {
+		return stubController{}, nil
+	}
+	defer func() { newController = oldNewController }()
+
 	repoRoot := t.TempDir()
 	changeDir := filepath.Join(repoRoot, "specs", "changes", "initial-scaffold")
 	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Initialize Go module\n")
@@ -212,7 +255,7 @@ exit 99
 	}
 
 	out := stdout.String()
-	for _, want := range []string{"Dry run for", "Mode: Ralph", "Agent: opencode", "Review fail_on: critical", "Branch: change/initial-scaffold", "Phase 1: Foundation"} {
+	for _, want := range []string{"Dry run for", "Mode: Ralph", "Agent: opencode", "Review fail_on: critical", "Branch: change/initial-scaffold", "Resume: false", "Phase 1: Foundation"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout missing %q in %q", want, out)
 		}
@@ -227,6 +270,12 @@ exit 99
 }
 
 func TestRunCLINoPRSkipsPRCreation(t *testing.T) {
+	oldNewController := newController
+	newController = func(cfg config.Config, opts ...controller.Option) (controller.Controller, error) {
+		return stubController{}, nil
+	}
+	defer func() { newController = oldNewController }()
+
 	repoRoot := t.TempDir()
 	changeDir := filepath.Join(repoRoot, "specs", "changes", "initial-scaffold")
 	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Initialize Go module\n")

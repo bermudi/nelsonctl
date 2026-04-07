@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -81,4 +82,43 @@ func ParseTasksFile(path string) ([]Phase, error) {
 	defer f.Close()
 
 	return ParseTasksMarkdown(f)
+}
+
+func FirstUncheckedPhase(phases []Phase) (Phase, bool) {
+	for _, phase := range phases {
+		if !phaseDone(phase) {
+			return phase, true
+		}
+	}
+	return Phase{}, false
+}
+
+func RemainingPhases(phases []Phase) []Phase {
+	if _, ok := FirstUncheckedPhase(phases); !ok {
+		return nil
+	}
+	remaining := make([]Phase, 0, len(phases))
+	for _, phase := range phases {
+		if phaseDone(phase) {
+			continue
+		}
+		remaining = append(remaining, phase)
+	}
+	return remaining
+}
+
+func ChangeNameFromPath(changePath string) string {
+	return filepath.Base(filepath.Clean(changePath))
+}
+
+func phaseDone(phase Phase) bool {
+	if len(phase.Tasks) == 0 {
+		return false
+	}
+	for _, task := range phase.Tasks {
+		if !task.Done {
+			return false
+		}
+	}
+	return true
 }
