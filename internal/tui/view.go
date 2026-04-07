@@ -21,7 +21,23 @@ func (m Model) renderProgress() string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("State: %s", m.state)))
 	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("Controller: %s", m.controller)))
+	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("Retries: %d/%d", m.currentAttempt, m.maxAttempts)))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("Mode: %s", m.execution.Mode)))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("Agent: %s", m.execution.Agent)))
+	b.WriteString("\n")
+	if m.execution.Step != "" {
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("Step: %s", m.execution.Step)))
+		b.WriteString("\n")
+	}
+	if m.execution.Model != "" {
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("Model: %s", m.execution.Model)))
+		b.WriteString("\n")
+	}
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("Resume: %t", m.execution.Resumed)))
 	b.WriteString("\n")
 	if m.paused {
 		b.WriteString(pausedStyle.Render("PAUSED"))
@@ -36,9 +52,15 @@ func (m Model) renderProgress() string {
 		b.WriteString("\n")
 		b.WriteString(m.summaryLine("Phases failed", m.summary.PhasesFailed))
 		b.WriteString("\n")
+		b.WriteString(m.summaryLine("Total attempts", m.summary.TotalAttempts))
+		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render("Duration: " + m.summary.Duration))
 		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render("Branch: " + m.summary.Branch))
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render("Mode: " + string(m.summary.Mode)))
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("Resumed: %t", m.summary.Resumed)))
 		b.WriteString("\n")
 	}
 

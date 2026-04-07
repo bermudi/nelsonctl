@@ -124,6 +124,14 @@ func TestPiRPCAgentRestartsAfterCrash(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "current phase must be re-run") {
 		t.Fatalf("expected crash restart error, got %v", err)
 	}
+	select {
+	case event := <-agent.Events():
+		if event.Metadata["restart"] != "true" {
+			t.Fatalf("restart event metadata = %#v", event.Metadata)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected restart event")
+	}
 	if starts != 2 {
 		t.Fatalf("starts = %d, want 2", starts)
 	}

@@ -2,6 +2,8 @@ package trace
 
 import "time"
 
+type executionMode string
+
 type RunMetaEvent struct {
 	Type      string `json:"type"`
 	Version   string `json:"version"`
@@ -49,6 +51,24 @@ type OutputChunkEvent struct {
 	Ts    string `json:"ts"`
 }
 
+type ExecutionContextEvent struct {
+	Type    string `json:"type"`
+	Mode    string `json:"mode"`
+	Agent   string `json:"agent"`
+	Step    string `json:"step,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Resumed bool   `json:"resumed,omitempty"`
+	Ts      string `json:"ts"`
+}
+
+type ControllerActivityEvent struct {
+	Type      string `json:"type"`
+	Tool      string `json:"tool,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	Analyzing bool   `json:"analyzing,omitempty"`
+	Ts        string `json:"ts"`
+}
+
 type ReviewResultEvent struct {
 	Type    string `json:"type"`
 	Passed  bool   `json:"passed"`
@@ -76,10 +96,10 @@ type GitCommitEvent struct {
 }
 
 type GitPushEvent struct {
-	Type    string `json:"type"`
-	Remote  string `json:"remote"`
-	Branch  string `json:"branch"`
-	Ts      string `json:"ts"`
+	Type   string `json:"type"`
+	Remote string `json:"remote"`
+	Branch string `json:"branch"`
+	Ts     string `json:"ts"`
 }
 
 type PREvent struct {
@@ -99,8 +119,11 @@ type SummaryEvent struct {
 	Type            string `json:"type"`
 	PhasesCompleted int    `json:"phases_completed"`
 	PhasesFailed    int    `json:"phases_failed"`
+	TotalAttempts   int    `json:"total_attempts,omitempty"`
 	Duration        string `json:"duration"`
 	Branch          string `json:"branch"`
+	Mode            string `json:"mode,omitempty"`
+	Resumed         bool   `json:"resumed,omitempty"`
 	Ts              string `json:"ts"`
 }
 

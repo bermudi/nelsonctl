@@ -2,7 +2,9 @@ package tui
 
 import (
 	"strings"
+	"time"
 
+	"github.com/bermudi/nelsonctl/internal/config"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,28 +30,42 @@ const (
 type Summary struct {
 	PhasesCompleted int
 	PhasesFailed    int
+	TotalAttempts   int
 	Duration        string
 	Branch          string
+	Mode            config.ExecutionMode
+	Resumed         bool
+}
+
+type ExecutionContext struct {
+	Mode    config.ExecutionMode
+	Agent   string
+	Step    string
+	Model   string
+	Resumed bool
 }
 
 // Model renders pipeline state and streaming agent output.
 type Model struct {
-	phases         []PhaseView
-	state          pipeline.State
-	width          int
-	height         int
-	viewport       viewport.Model
-	outputLines    []string
-	currentPhase   int
-	currentAttempt int
-	maxAttempts    int
-	paused         bool
-	aborted        bool
-	summary        *Summary
-	events         <-chan tea.Msg
-	taunt          string
-	pauseChan      chan struct{}
-	resumeChan     chan struct{}
+	phases             []PhaseView
+	state              pipeline.State
+	width              int
+	height             int
+	viewport           viewport.Model
+	outputLines        []string
+	currentPhase       int
+	currentAttempt     int
+	maxAttempts        int
+	paused             bool
+	aborted            bool
+	summary            *Summary
+	execution          ExecutionContext
+	controller         string
+	events             <-chan tea.Msg
+	taunt              string
+	pendingAgentOutput strings.Builder
+	pauseChan          chan struct{}
+	resumeChan         chan struct{}
 }
 
 // NewModel creates a TUI model from parsed phases.
@@ -66,6 +82,7 @@ func NewModel(phases []pipeline.Phase) Model {
 		state:       pipeline.StateInit,
 		viewport:    vp,
 		maxAttempts: 3,
+		controller:  "⚙ Controller: analyzing...",
 		pauseChan:   make(chan struct{}, 1),
 		resumeChan:  make(chan struct{}, 1),
 	}
@@ -105,6 +122,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.resizeViewport()
 		return m, m.nextEventCmd()
+	case agentFlushMsg:
+		if m.pendingAgentOutput.Len() > 0 {
+			m.appendOutput(m.pendingAgentOutput.String())
+			m.pendingAgentOutput.Reset()
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -144,15 +167,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setPhaseStatus(msg.Number, status, msg.Attempts, msg.Review)
 	case OutputMsg:
-		m.outputLines = append(m.outputLines, msg.Chunk)
-		m.viewport.SetContent(strings.Join(m.outputLines, "\n"))
-		m.viewport.GotoBottom()
+		m.appendOutput(msg.Chunk)
+	case AgentStreamMsg:
+		m.pendingAgentOutput.WriteString(msg.Chunk)
+		return m, flushAgentOutput()
+	case AgentStatusMsg:
+		m.appendOutput(msg.Text)
+	case ExecutionContextMsg:
+		m.execution = ExecutionContext{Mode: msg.Mode, Agent: msg.Agent, Step: msg.Step, Model: msg.Model, Resumed: msg.Resumed}
+	case ControllerActivityMsg:
+		m.controller = controllerStatus(msg)
 	case SummaryMsg:
 		m.summary = &Summary{
 			PhasesCompleted: msg.PhasesCompleted,
 			PhasesFailed:    msg.PhasesFailed,
+			TotalAttempts:   msg.TotalAttempts,
 			Duration:        msg.Duration.String(),
 			Branch:          msg.Branch,
+			Mode:            msg.Mode,
+			Resumed:         msg.Resumed,
 		}
 	case TauntMsg:
 		m.taunt = "HA-ha!"
@@ -163,6 +196,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+func (m *Model) appendOutput(chunk string) {
+	if strings.TrimSpace(chunk) == "" {
+		return
+	}
+	m.outputLines = append(m.outputLines, chunk)
+	m.viewport.SetContent(strings.Join(m.outputLines, "\n"))
+	m.viewport.GotoBottom()
 }
 
 func (m Model) nextEventCmd() tea.Cmd {
@@ -211,6 +253,33 @@ func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
 			return nil
 		}
 		return msg
+	}
+}
+
+type agentFlushMsg struct{}
+
+func flushAgentOutput() tea.Cmd {
+	return tea.Tick(35*time.Millisecond, func(time.Time) tea.Msg {
+		return agentFlushMsg{}
+	})
+}
+
+func controllerStatus(msg ControllerActivityMsg) string {
+	if msg.Analyzing {
+		return "⚙ Controller: analyzing..."
+	}
+	switch msg.Tool {
+	case "submit_prompt":
+		return "⚙ Controller: sending apply prompt..."
+	case "run_review":
+		return "⚙ Controller: running review..."
+	case "approve":
+		if strings.TrimSpace(msg.Summary) == "" {
+			return "⚙ Controller: approved"
+		}
+		return "⚙ Controller: approved - " + strings.TrimSpace(msg.Summary)
+	default:
+		return "⚙ Controller: analyzing..."
 	}
 }
 

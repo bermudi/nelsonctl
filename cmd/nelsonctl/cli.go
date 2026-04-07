@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bermudi/nelsonctl/internal/agent"
@@ -107,6 +108,8 @@ func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, std
 	p := pipeline.New(absChangePath, cwd, agentClient, gitClient)
 	p.Controller = controllerClient
 	p.Config = cfg
+	p.Mode = resolvedAgent.Mode
+	p.AgentName = resolvedAgent.Name
 
 	if !opts.noPR {
 		p.PR = pipeline.NewGHClient()
@@ -123,11 +126,26 @@ func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, std
 		}
 
 		model := tui.NewModel(phases).WithEventChannel(events)
-		p.OnEvent = func(msg pipeline.Event) {
-			events <- toTeaMsg(msg)
+		safeEmit := func(msg tea.Msg) {
+			if msg == nil {
+				return
+			}
+			defer func() { _ = recover() }()
+			events <- msg
 		}
+		p.OnEvent = func(msg pipeline.Event) {
+			safeEmit(toTeaMsg(msg))
+		}
+		p.UseAgentEventOutput = true
 		p.PauseChan = model.PauseChan()
 		p.ResumeChan = model.ResumeChan()
+
+		var eventWG sync.WaitGroup
+		eventWG.Add(1)
+		go func() {
+			defer eventWG.Done()
+			forwardAgentEvents(agentClient.Events(), safeEmit)
+		}()
 
 		type runResult struct {
 			report *pipeline.Report
@@ -137,7 +155,6 @@ func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, std
 
 		go func() {
 			report, runErr := p.Run(ctx)
-			close(events)
 			resultCh <- runResult{report: report, err: runErr}
 		}()
 
@@ -148,6 +165,8 @@ func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, std
 		}
 
 		result := <-resultCh
+		eventWG.Wait()
+		close(events)
 		if result.err != nil {
 			fmt.Fprintln(stderr, result.err)
 			return 1
@@ -253,10 +272,41 @@ func toTeaMsg(msg pipeline.Event) tea.Msg {
 		return tui.PhaseResultMsg{Number: m.Number, Passed: m.Passed, Attempts: m.Attempts, Review: m.Review}
 	case pipeline.OutputEvent:
 		return tui.OutputMsg{Chunk: m.Chunk}
+	case pipeline.ExecutionContextEvent:
+		return tui.ExecutionContextMsg{Mode: m.Mode, Agent: m.Agent, Step: m.Step, Model: m.Model, Resumed: m.Resumed}
+	case pipeline.ControllerActivityEvent:
+		return tui.ControllerActivityMsg{Tool: m.Tool, Summary: m.Summary, Analyzing: m.Analyzing}
 	case pipeline.TauntEvent:
 		return tui.TauntMsg{PhaseNumber: m.PhaseNumber}
 	case pipeline.SummaryEvent:
-		return tui.SummaryMsg{PhasesCompleted: m.PhasesCompleted, PhasesFailed: m.PhasesFailed, Duration: parseDuration(m.Duration), Branch: m.Branch}
+		return tui.SummaryMsg{PhasesCompleted: m.PhasesCompleted, PhasesFailed: m.PhasesFailed, TotalAttempts: m.TotalAttempts, Duration: parseDuration(m.Duration), Branch: m.Branch, Mode: m.Mode, Resumed: m.Resumed}
+	default:
+		return nil
+	}
+}
+
+func forwardAgentEvents(ch <-chan agent.Event, emit func(tea.Msg)) {
+	if ch == nil {
+		return
+	}
+	for event := range ch {
+		if msg := toAgentTeaMsg(event); msg != nil {
+			emit(msg)
+		}
+	}
+}
+
+func toAgentTeaMsg(event agent.Event) tea.Msg {
+	switch event.Type {
+	case agent.TextEvent:
+		return tui.AgentStreamMsg{Chunk: event.Content, Metadata: event.Metadata}
+	case agent.ErrorEvent:
+		return tui.AgentStatusMsg{Text: event.Content}
+	case agent.CompletionEvent:
+		if event.Metadata["restart"] == "true" {
+			return tui.AgentStatusMsg{Text: event.Content}
+		}
+		return nil
 	default:
 		return nil
 	}

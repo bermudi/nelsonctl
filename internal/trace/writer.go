@@ -16,16 +16,16 @@ const (
 )
 
 type TraceWriter struct {
-	path       string
-	file       *os.File
-	writer     *bufio.Writer
-	ch         chan interface{}
-	done       chan struct{}
-	failed     bool
-	failMu     sync.RWMutex
-	closeOnce  sync.Once
-	closed     bool
-	closedMu   sync.Mutex
+	path      string
+	file      *os.File
+	writer    *bufio.Writer
+	ch        chan interface{}
+	done      chan struct{}
+	failed    bool
+	failMu    sync.RWMutex
+	closeOnce sync.Once
+	closed    bool
+	closedMu  sync.Mutex
 }
 
 func New(path string, meta RunMetaEvent) (*TraceWriter, error) {
@@ -180,6 +180,24 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 			Chunk: e.Chunk,
 			Ts:    timestamp(),
 		}
+	case pipeline.ExecutionContextEvent:
+		return ExecutionContextEvent{
+			Type:    "execution_context",
+			Mode:    string(e.Mode),
+			Agent:   e.Agent,
+			Step:    e.Step,
+			Model:   e.Model,
+			Resumed: e.Resumed,
+			Ts:      timestamp(),
+		}
+	case pipeline.ControllerActivityEvent:
+		return ControllerActivityEvent{
+			Type:      "controller_activity",
+			Tool:      e.Tool,
+			Summary:   e.Summary,
+			Analyzing: e.Analyzing,
+			Ts:        timestamp(),
+		}
 	case pipeline.TauntEvent:
 		return TauntEvent{
 			Type:  "taunt",
@@ -191,8 +209,11 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 			Type:            "summary",
 			PhasesCompleted: e.PhasesCompleted,
 			PhasesFailed:    e.PhasesFailed,
+			TotalAttempts:   e.TotalAttempts,
 			Duration:        e.Duration,
 			Branch:          e.Branch,
+			Mode:            string(e.Mode),
+			Resumed:         e.Resumed,
 			Ts:              timestamp(),
 		}
 	case pipeline.PhaseResultEvent:

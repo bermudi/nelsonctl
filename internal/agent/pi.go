@@ -350,6 +350,7 @@ func (a *piRPCAgent) restartAfterCrash(ctx context.Context, cause error) error {
 	if err := a.ensureClient(ctx); err != nil {
 		return fmt.Errorf("restart pi after crash: %w", err)
 	}
+	a.emit(Event{Type: CompletionEvent, Content: "Nelson restarted Pi after a crash.", Metadata: map[string]string{"restart": "true"}})
 	return fmt.Errorf("pi process exited unexpectedly; restarted and current phase must be re-run: %w", cause)
 }
 

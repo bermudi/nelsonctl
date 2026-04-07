@@ -56,44 +56,53 @@ type PhaseReport struct {
 
 // Report summarizes a full pipeline run.
 type Report struct {
-	ChangeName         string
-	BranchName         string
-	States             []State
-	Phases             []PhaseReport
-	FinalReviewPassed  bool
-	FinalReviewOutput  string
-	FinalReviewSummary string
-	PullRequestNote    string
-	Resumed            bool
+	ChangeName          string
+	BranchName          string
+	States              []State
+	Phases              []PhaseReport
+	FinalReviewPassed   bool
+	FinalReviewAttempts int
+	FinalReviewOutput   string
+	FinalReviewSummary  string
+	PullRequestNote     string
+	Resumed             bool
+	Mode                config.ExecutionMode
+	AgentName           string
+	TotalAttempts       int
 }
 
 // Event is a sealed interface for all pipeline events.
 type Event interface{ pipelineEvent() }
 
-func (StateEvent) pipelineEvent()       {}
-func (PhaseStartEvent) pipelineEvent()  {}
-func (PhaseResultEvent) pipelineEvent() {}
-func (OutputEvent) pipelineEvent()      {}
-func (TauntEvent) pipelineEvent()       {}
-func (SummaryEvent) pipelineEvent()     {}
+func (StateEvent) pipelineEvent()              {}
+func (PhaseStartEvent) pipelineEvent()         {}
+func (PhaseResultEvent) pipelineEvent()        {}
+func (ExecutionContextEvent) pipelineEvent()   {}
+func (ControllerActivityEvent) pipelineEvent() {}
+func (OutputEvent) pipelineEvent()             {}
+func (TauntEvent) pipelineEvent()              {}
+func (SummaryEvent) pipelineEvent()            {}
 
 // EventHandler receives pipeline events for display (e.g. TUI messages).
 type EventHandler func(msg Event)
 
 // Pipeline coordinates apply/review/fix across a change directory.
 type Pipeline struct {
-	ChangePath  string
-	RepoDir     string
-	Agent       agent.Agent
-	Controller  ctrl.Controller
-	Config      config.Config
-	Git         GitOps
-	PR          PullRequestCreator
-	MaxAttempts int
-	OnEvent     EventHandler
-	Confirm     func(prompt string) bool
-	PauseChan   <-chan struct{}
-	ResumeChan  <-chan struct{}
+	ChangePath          string
+	RepoDir             string
+	Agent               agent.Agent
+	Controller          ctrl.Controller
+	Config              config.Config
+	Git                 GitOps
+	PR                  PullRequestCreator
+	MaxAttempts         int
+	OnEvent             EventHandler
+	Confirm             func(prompt string) bool
+	PauseChan           <-chan struct{}
+	ResumeChan          <-chan struct{}
+	Mode                config.ExecutionMode
+	AgentName           string
+	UseAgentEventOutput bool
 
 	processExists func(pid int) bool
 	now           func() time.Time
@@ -149,6 +158,8 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 	changeName := ChangeNameFromPath(p.ChangePath)
 	branchName := branchForChange(changeName)
 	report := &Report{ChangeName: changeName, BranchName: branchName}
+	report.Mode = p.Mode
+	report.AgentName = p.AgentName
 
 	phases, err := ParseTasksFile(filepath.Join(p.ChangePath, "tasks.md"))
 	if err != nil {
@@ -158,6 +169,7 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 	if len(remaining) != len(phases) {
 		report.Resumed = len(remaining) > 0
 	}
+	p.emit(ExecutionContextEvent{Mode: p.Mode, Agent: p.AgentName, Resumed: report.Resumed})
 
 	emitState := func(state State) {
 		report.States = append(report.States, state)
@@ -209,18 +221,21 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 		} else {
 			phasesFailed++
 		}
+		report.TotalAttempts += pr.Attempts
 	}
 
 	if phasesFailed == 0 {
 		emitState(StateFinalReview)
 		p.waitIfPaused(ctx)
-		passed, summary, output, err := p.runFinalReview(ctx, changeName)
+		passed, attempts, summary, output, err := p.runFinalReview(ctx, changeName)
 		if err != nil {
 			return report, err
 		}
 		report.FinalReviewPassed = passed
+		report.FinalReviewAttempts = attempts
 		report.FinalReviewSummary = summary
 		report.FinalReviewOutput = output
+		report.TotalAttempts += attempts
 
 		if report.FinalReviewPassed {
 			emitState(StatePR)
@@ -238,8 +253,11 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 	p.emit(SummaryEvent{
 		PhasesCompleted: phasesCompleted,
 		PhasesFailed:    phasesFailed,
+		TotalAttempts:   report.TotalAttempts,
 		Duration:        time.Since(start).Round(time.Millisecond).String(),
 		Branch:          branchName,
+		Mode:            p.Mode,
+		Resumed:         report.Resumed,
 	})
 
 	emitState(StateDone)
@@ -280,23 +298,24 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 	return report, nil
 }
 
-func (p *Pipeline) runFinalReview(ctx context.Context, changeName string) (bool, string, string, error) {
+func (p *Pipeline) runFinalReview(ctx context.Context, changeName string) (bool, int, string, string, error) {
 	execution := &phaseExecution{pipeline: p, changeName: changeName, final: true, maxAttempts: p.MaxAttempts, currentAttempt: 1}
 	request := ctrl.FinalReviewRequest{ChangeName: changeName, ReviewFailOn: p.Config.Review.FailOn}
 	dispatcher := execution.dispatcher(true)
+	p.emit(ControllerActivityEvent{Analyzing: true})
 
 	result, err := p.Controller.RunFinalReview(ctx, request, dispatcher)
 	if err != nil {
 		if strings.Contains(err.Error(), "attempt budget exhausted") {
-			return false, "", execution.lastReviewOutput, nil
+			return false, execution.currentAttempt, "", execution.lastReviewOutput, nil
 		}
-		return false, "", execution.lastReviewOutput, err
+		return false, execution.currentAttempt, "", execution.lastReviewOutput, err
 	}
-	return true, strings.TrimSpace(result.Summary), execution.lastReviewOutput, nil
+	return true, execution.currentAttempt, strings.TrimSpace(result.Summary), execution.lastReviewOutput, nil
 }
 
 func (e *phaseExecution) dispatcher(final bool) ctrl.Dispatcher {
-	return ctrl.NewToolDispatcher(ctrl.Handlers{
+	base := ctrl.NewToolDispatcher(ctrl.Handlers{
 		RepoDir: e.pipeline.RepoDir,
 		GetDiff: func(ctx context.Context) (string, error) {
 			return e.pipeline.Git.Diff(ctx)
@@ -314,6 +333,7 @@ func (e *phaseExecution) dispatcher(final bool) ctrl.Dispatcher {
 			return nil
 		},
 	})
+	return controllerEventDispatcher{pipeline: e.pipeline, inner: base}
 }
 
 func (e *phaseExecution) submitPrompt(ctx context.Context, prompt string, final bool) (string, error) {
@@ -338,6 +358,7 @@ func (e *phaseExecution) submitPrompt(ctx context.Context, prompt string, final 
 		step = agent.StepFix
 		model = e.pipeline.Config.Steps.Fix.Model
 	}
+	e.pipeline.emit(ExecutionContextEvent{Mode: e.pipeline.Mode, Agent: e.pipeline.AgentName, Step: string(step), Model: model, Resumed: false})
 	res, err := e.pipeline.Agent.ExecuteStep(ctx, step, strings.TrimSpace(prompt), model)
 	e.pipeline.emitResultOutput(res)
 	if err != nil {
@@ -354,6 +375,7 @@ func (e *phaseExecution) runReview(ctx context.Context, final bool) (string, err
 	if final {
 		step = agent.StepFinalReview
 	}
+	e.pipeline.emit(ExecutionContextEvent{Mode: e.pipeline.Mode, Agent: e.pipeline.AgentName, Step: string(step), Model: e.pipeline.Config.Steps.Review.Model, Resumed: false})
 	res, err := e.pipeline.Agent.ExecuteStep(ctx, step, MechanicalReviewPrompt(e.changeName, final), e.pipeline.Config.Steps.Review.Model)
 	e.pipeline.emitResultOutput(res)
 	output := reviewOutput(resultText(res), errorText(err))
@@ -546,6 +568,9 @@ func resultExitCode(res *agent.Result, err error) int {
 }
 
 func (p *Pipeline) emitResultOutput(res *agent.Result) {
+	if p.UseAgentEventOutput {
+		return
+	}
 	if res != nil && res.Stdout != "" {
 		p.emit(OutputEvent{Chunk: res.Stdout})
 	}
@@ -594,6 +619,22 @@ type PhaseResultEvent struct {
 	Review   string
 }
 
+// ExecutionContextEvent updates the operator-visible step context.
+type ExecutionContextEvent struct {
+	Mode    config.ExecutionMode
+	Agent   string
+	Step    string
+	Model   string
+	Resumed bool
+}
+
+// ControllerActivityEvent surfaces controller tool activity without parsing reasoning.
+type ControllerActivityEvent struct {
+	Tool      string
+	Summary   string
+	Analyzing bool
+}
+
 // OutputEvent is emitted for agent output chunks.
 type OutputEvent struct {
 	Chunk string
@@ -608,6 +649,28 @@ type TauntEvent struct {
 type SummaryEvent struct {
 	PhasesCompleted int
 	PhasesFailed    int
+	TotalAttempts   int
 	Duration        string
 	Branch          string
+	Mode            config.ExecutionMode
+	Resumed         bool
+}
+
+type controllerEventDispatcher struct {
+	pipeline *Pipeline
+	inner    ctrl.Dispatcher
+}
+
+func (d controllerEventDispatcher) Dispatch(ctx context.Context, call ctrl.ToolCall) (ctrl.DispatchResult, error) {
+	d.pipeline.emit(ControllerActivityEvent{Tool: string(call.Name)})
+	result, err := d.inner.Dispatch(ctx, call)
+	if err != nil {
+		return result, err
+	}
+	if result.Approved {
+		d.pipeline.emit(ControllerActivityEvent{Tool: string(call.Name), Summary: result.Summary})
+		return result, nil
+	}
+	d.pipeline.emit(ControllerActivityEvent{Analyzing: true})
+	return result, nil
 }

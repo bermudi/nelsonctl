@@ -39,10 +39,10 @@
 - [x] Write tests for controller-pipeline integration, resume logic, lock handling, scoped staging, and mechanical review prompt
 
 ## Phase 5: TUI and Operator Experience
-- [ ] Surface controller tool call activity as mechanical status lines in the TUI (switch on tool name, no parsing)
-- [ ] Surface execution mode, selected agent, active model, and resume state in the TUI for `Execution Context Visibility`
-- [ ] Batch Pi `message_update` events onto the TUI render loop while preserving terminal events for `Pi Event Rendering`
-- [ ] Surface Pi restart events in the TUI
-- [ ] Extend the exit summary with execution mode for `Exit Summary Includes Mode`
-- [ ] Document Pi-first setup, controller configuration, environment variables, and CLI fallback in `README.md`
-- [ ] Add end-to-end coverage with a mock Pi RPC process, mock controller API, and a mock CLI agent
+- [x] Surface controller tool call activity as mechanical status lines in the TUI (switch on tool name, no parsing)
+- [x] Surface execution mode, selected agent, active model, and resume state in the TUI for `Execution Context Visibility`
+- [x] Batch Pi `message_update` events onto the TUI render loop while preserving terminal events for `Pi Event Rendering`
+- [x] Surface Pi restart events in the TUI
+- [x] Extend the exit summary with execution mode for `Exit Summary Includes Mode`
+- [x] Document Pi-first setup, controller configuration, environment variables, and CLI fallback in `README.md`
+- [x] Add end-to-end coverage with a mock Pi RPC process, mock controller API, and a mock CLI agent

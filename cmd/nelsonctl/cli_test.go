@@ -338,6 +338,81 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	}
 }
 
+func TestRunCLIPiModeUsesNelsonContext(t *testing.T) {
+	oldNewController := newController
+	newController = func(cfg config.Config, opts ...controller.Option) (controller.Controller, error) {
+		return stubController{}, nil
+	}
+	defer func() { newController = oldNewController }()
+
+	repoRoot := t.TempDir()
+	changeDir := filepath.Join(repoRoot, "specs", "changes", "pi-mode")
+	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] ship\n")
+	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
+	configHome := t.TempDir()
+	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
+		"agent: pi",
+		"steps:",
+		"  apply:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 1s",
+		"  review:",
+		"    model: moonshotai/kimi-k2.5",
+		"    timeout: 1s",
+		"  fix:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 1s",
+		"controller:",
+		"  provider: openrouter",
+		"  model: deepseek/deepseek-reasoner",
+		"  max_tool_calls: 50",
+		"  timeout: 45m",
+		"review:",
+		"  fail_on: critical",
+	}, "\n"))
+
+	binDir := t.TempDir()
+	gitLog := filepath.Join(repoRoot, "git.log")
+	mustWriteScript(t, filepath.Join(binDir, "pi"), `#!/bin/sh
+if [ "$1" = "--mode" ] && [ "$2" = "rpc" ] && [ "$4" = "--version" ]; then
+  echo "pi 0.65.2"
+  exit 0
+fi
+echo "unexpected pi invocation" >&2
+exit 1
+`)
+	mustWriteScript(t, filepath.Join(binDir, "git"), `#!/bin/sh
+case "$*" in
+  "branch --show-current") echo "main" ; exit 0 ;;
+  "rev-parse --verify "*) exit 1 ;;
+  "diff --quiet") exit 0 ;;
+  "diff --name-only") echo "file.go" ; exit 0 ;;
+  "diff --cached --quiet") exit 1 ;;
+esac
+echo "git $*" >> "$MOCK_GIT_LOG"
+`)
+	mustWriteScript(t, filepath.Join(binDir, "gh"), `#!/bin/sh
+exit 0
+`)
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("MOCK_GIT_LOG", gitLog)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	code := runCLI(context.Background(), []string{"--verbose", changeDir}, repoRoot, strings.NewReader(""), stdout, stderr)
+	if code != 0 {
+		t.Fatalf("runCLI() code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "final review passed: true") {
+		t.Fatalf("stdout = %q", out)
+	}
+}
+
 func TestRunCLIInitWritesConfig(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
@@ -421,14 +496,24 @@ func TestToTeaMsgBridgesAllEventTypes(t *testing.T) {
 			want:  tui.OutputMsg{Chunk: "hello"},
 		},
 		{
+			name:  "execution context event",
+			event: pipeline.ExecutionContextEvent{Mode: config.ModeNelson, Agent: "pi", Step: "review", Model: "kimi", Resumed: true},
+			want:  tui.ExecutionContextMsg{Mode: config.ModeNelson, Agent: "pi", Step: "review", Model: "kimi", Resumed: true},
+		},
+		{
+			name:  "controller activity event",
+			event: pipeline.ControllerActivityEvent{Tool: "run_review", Summary: "ok"},
+			want:  tui.ControllerActivityMsg{Tool: "run_review", Summary: "ok"},
+		},
+		{
 			name:  "taunt event",
 			event: pipeline.TauntEvent{PhaseNumber: 3},
 			want:  tui.TauntMsg{PhaseNumber: 3},
 		},
 		{
 			name:  "summary event",
-			event: pipeline.SummaryEvent{PhasesCompleted: 2, PhasesFailed: 1, Duration: "1m30s", Branch: "change/foo"},
-			want:  tui.SummaryMsg{PhasesCompleted: 2, PhasesFailed: 1, Duration: 90 * time.Second, Branch: "change/foo"},
+			event: pipeline.SummaryEvent{PhasesCompleted: 2, PhasesFailed: 1, TotalAttempts: 5, Duration: "1m30s", Branch: "change/foo", Mode: config.ModeRalph, Resumed: true},
+			want:  tui.SummaryMsg{PhasesCompleted: 2, PhasesFailed: 1, TotalAttempts: 5, Duration: 90 * time.Second, Branch: "change/foo", Mode: config.ModeRalph, Resumed: true},
 		},
 	}
 

@@ -3,6 +3,7 @@ package tui
 import (
 	"time"
 
+	"github.com/bermudi/nelsonctl/internal/config"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
 )
 
@@ -35,12 +36,42 @@ type OutputMsg struct {
 	Chunk string
 }
 
+// AgentStreamMsg appends streamed agent output, potentially batched by the TUI.
+type AgentStreamMsg struct {
+	Chunk    string
+	Metadata map[string]string
+}
+
+// AgentStatusMsg appends non-streaming agent status notices.
+type AgentStatusMsg struct {
+	Text string
+}
+
+// ExecutionContextMsg updates the active execution context shown in the TUI.
+type ExecutionContextMsg struct {
+	Mode    config.ExecutionMode
+	Agent   string
+	Step    string
+	Model   string
+	Resumed bool
+}
+
+// ControllerActivityMsg reflects a controller tool call mechanically.
+type ControllerActivityMsg struct {
+	Tool      string
+	Summary   string
+	Analyzing bool
+}
+
 // SummaryMsg sets the final exit summary.
 type SummaryMsg struct {
 	PhasesCompleted int
 	PhasesFailed    int
+	TotalAttempts   int
 	Duration        time.Duration
 	Branch          string
+	Mode            config.ExecutionMode
+	Resumed         bool
 }
 
 // TauntMsg is emitted when a phase exhausts all retry attempts.

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bermudi/nelsonctl/internal/config"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -20,20 +21,52 @@ func TestModelUpdateTransitions(t *testing.T) {
 
 	updated, _ = m.Update(StateMsg{State: pipeline.StatePhaseLoop})
 	m = updated.(Model)
+	updated, _ = m.Update(ExecutionContextMsg{Mode: config.ModeNelson, Agent: "pi", Step: "review", Model: "moonshotai/kimi-k2.5", Resumed: true})
+	m = updated.(Model)
+	updated, _ = m.Update(ControllerActivityMsg{Tool: "run_review"})
+	m = updated.(Model)
 	updated, _ = m.Update(PhaseMsg{Number: 1, Name: "Foundation", Attempt: 1})
 	m = updated.(Model)
 	updated, _ = m.Update(OutputMsg{Chunk: "agent line one"})
 	m = updated.(Model)
 	updated, _ = m.Update(PhaseResultMsg{Number: 1, Passed: true, Attempts: 2, Review: "all good"})
 	m = updated.(Model)
-	updated, _ = m.Update(SummaryMsg{PhasesCompleted: 2, PhasesFailed: 0, Duration: 3 * time.Minute, Branch: "change/initial-scaffold"})
+	updated, _ = m.Update(SummaryMsg{PhasesCompleted: 2, PhasesFailed: 0, TotalAttempts: 4, Duration: 3 * time.Minute, Branch: "change/initial-scaffold", Mode: config.ModeNelson, Resumed: true})
 	m = updated.(Model)
 
 	view := m.View()
-	for _, want := range []string{"Progress", "Output", "● passed", "Retries: 1/3", "Phases completed: 2", "Duration: 3m0s", "Branch: change/initial-scaffold", "agent line one"} {
+	for _, want := range []string{"Progress", "Output", "● passed", "Retries: 1/3", "Mode: Nelson", "Agent: pi", "Model: moonshotai/kimi-k2.5", "Resume: true", "Controller: ⚙ Controller: running review...", "Phases completed: 2", "Total attempts: 4", "Duration: 3m0s", "Branch: change/initial-scaffold", "agent line one"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q in %q", want, view)
 		}
+	}
+}
+
+func TestModelBatchesAgentStreamOutput(t *testing.T) {
+	m := NewModel(nil)
+	updated, cmd := m.Update(AgentStreamMsg{Chunk: "hello ", Metadata: map[string]string{"session_id": "s1"}})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected flush command")
+	}
+	updated, _ = m.Update(AgentStreamMsg{Chunk: "world", Metadata: map[string]string{"session_id": "s1"}})
+	m = updated.(Model)
+	updated, _ = m.Update(agentFlushMsg{})
+	m = updated.(Model)
+	if got := strings.Join(m.outputLines, "\n"); !strings.Contains(got, "hello world") {
+		t.Fatalf("output = %q", got)
+	}
+}
+
+func TestControllerStatusMapping(t *testing.T) {
+	if got := controllerStatus(ControllerActivityMsg{Analyzing: true}); got != "⚙ Controller: analyzing..." {
+		t.Fatalf("analyzing = %q", got)
+	}
+	if got := controllerStatus(ControllerActivityMsg{Tool: "submit_prompt"}); got != "⚙ Controller: sending apply prompt..." {
+		t.Fatalf("submit_prompt = %q", got)
+	}
+	if got := controllerStatus(ControllerActivityMsg{Tool: "approve", Summary: "all clear"}); got != "⚙ Controller: approved - all clear" {
+		t.Fatalf("approve = %q", got)
 	}
 }
 

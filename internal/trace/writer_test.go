@@ -164,6 +164,8 @@ func TestPartialTraceValidity(t *testing.T) {
 
 	events := []pipeline.Event{
 		pipeline.StateEvent{State: pipeline.StateInit},
+		pipeline.ExecutionContextEvent{Mode: "Nelson", Agent: "pi", Step: "apply", Model: "m2.7", Resumed: true},
+		pipeline.ControllerActivityEvent{Tool: "submit_prompt"},
 		pipeline.StateEvent{State: pipeline.StateBranch},
 		pipeline.PhaseStartEvent{Number: 1, Name: "test", Attempt: 1},
 		pipeline.OutputEvent{Chunk: "hello"},
@@ -372,6 +374,26 @@ func TestToTraceEventExistingEvents(t *testing.T) {
 		t.Errorf("unexpected: %+v", traceOut)
 	}
 
+	ctxEv := pipeline.ExecutionContextEvent{Mode: "Nelson", Agent: "pi", Step: "review", Model: "kimi", Resumed: true}
+	result = tw.toTraceEvent(ctxEv)
+	traceCtx, ok := result.(ExecutionContextEvent)
+	if !ok {
+		t.Fatalf("expected ExecutionContextEvent")
+	}
+	if traceCtx.Mode != "Nelson" || traceCtx.Agent != "pi" || traceCtx.Step != "review" || !traceCtx.Resumed {
+		t.Errorf("unexpected: %+v", traceCtx)
+	}
+
+	controllerEv := pipeline.ControllerActivityEvent{Tool: "approve", Summary: "done"}
+	result = tw.toTraceEvent(controllerEv)
+	traceController, ok := result.(ControllerActivityEvent)
+	if !ok {
+		t.Fatalf("expected ControllerActivityEvent")
+	}
+	if traceController.Tool != "approve" || traceController.Summary != "done" {
+		t.Errorf("unexpected: %+v", traceController)
+	}
+
 	phaseResultEv := pipeline.PhaseResultEvent{Number: 1, Passed: true, Attempts: 3, Review: "ok"}
 	result = tw.toTraceEvent(phaseResultEv)
 	tracePr, ok := result.(PhaseResultEvent)
@@ -392,13 +414,13 @@ func TestToTraceEventExistingEvents(t *testing.T) {
 		t.Errorf("unexpected: %+v", traceT)
 	}
 
-	summaryEv := pipeline.SummaryEvent{PhasesCompleted: 3, PhasesFailed: 1, Duration: "5m", Branch: "change/foo"}
+	summaryEv := pipeline.SummaryEvent{PhasesCompleted: 3, PhasesFailed: 1, TotalAttempts: 6, Duration: "5m", Branch: "change/foo", Mode: "Nelson", Resumed: true}
 	result = tw.toTraceEvent(summaryEv)
 	traceS, ok := result.(SummaryEvent)
 	if !ok {
 		t.Fatalf("expected SummaryEvent")
 	}
-	if traceS.PhasesCompleted != 3 || traceS.PhasesFailed != 1 || traceS.Duration != "5m" || traceS.Branch != "change/foo" {
+	if traceS.PhasesCompleted != 3 || traceS.PhasesFailed != 1 || traceS.TotalAttempts != 6 || traceS.Duration != "5m" || traceS.Branch != "change/foo" || traceS.Mode != "Nelson" || !traceS.Resumed {
 		t.Errorf("unexpected: %+v", traceS)
 	}
 
