@@ -8,13 +8,13 @@
 - [x] Write tests for config parsing, environment-driven credentials, controller settings, and startup validation
 
 ## Phase 2: Controller AI
-- [ ] Define the Controller interface and tool types in `internal/controller/controller.go` — `read_file`, `get_diff`, `submit_prompt`, `run_review`, `approve`
-- [ ] Implement the DeepSeek/OpenRouter client using OpenAI-compatible `/chat/completions` with tool calling in `internal/controller/controller.go`
-- [ ] Implement the tool-calling agent loop: dispatch tool calls, collect results, feed back into conversation, enforce 50-call and 45-minute guardrails
-- [ ] Write system prompts for phase controller and final-review controller in `internal/controller/prompts.go`
-- [ ] Implement tool dispatch in `internal/controller/tools.go` — `read_file` reads from disk, `get_diff` shells to git, `submit_prompt` and `run_review` delegate to the pipeline's agent execution, `approve` signals phase completion
-- [ ] Implement retry with exponential backoff (3 attempts) for controller API failures
-- [ ] Write tests for tool dispatch, agent loop lifecycle, guardrail enforcement, and API failure recovery using a mock OpenAI-compatible server
+- [x] Define the Controller interface and tool types in `internal/controller/controller.go` — `read_file`, `get_diff`, `submit_prompt`, `run_review`, `approve`
+- [x] Implement the DeepSeek/OpenRouter client using OpenAI-compatible `/chat/completions` with tool calling in `internal/controller/controller.go`
+- [x] Implement the tool-calling agent loop: dispatch tool calls, collect results, feed back into conversation, enforce 50-call and 45-minute guardrails
+- [x] Write system prompts for phase controller and final-review controller in `internal/controller/prompts.go`
+- [x] Implement tool dispatch in `internal/controller/tools.go` — `read_file` reads from disk, `get_diff` shells to git, `submit_prompt` and `run_review` delegate to the pipeline's agent execution, `approve` signals phase completion
+- [x] Implement retry with exponential backoff (3 attempts) for controller API failures
+- [x] Write tests for tool dispatch, agent loop lifecycle, guardrail enforcement, and API failure recovery using a mock OpenAI-compatible server
 
 ## Phase 3: Pi RPC Transport
 - [ ] Extend the agent contract to support both CLI and RPC implementations for `Two-Tier Agent Execution`
