@@ -4,6 +4,16 @@
 
 nelsonctl is a harness that automates the execution phase of litespec's spec-driven development workflow. It is not a general-purpose tool — it exists specifically to drive agents through litespec's apply → review → fix loop.
 
+## Two AI Roles
+
+There are two distinct AI systems in nelsonctl. They serve completely different purposes and are configured independently:
+
+1. **The Agent** — the coding tool (opencode, claude, codex, amp, pi) that actually writes, edits, and reviews code. Configured in `steps.apply` and `steps.review` in the nelsonctl config. Each step can use a different model. The agent is the "worker" — it receives prompts, uses litespec skills, and produces code changes or review output.
+
+2. **The Controller** — nelsonctl's own AI brain that evaluates review results, decides pass/fail, and orchestrates the pipeline state machine. Configured in `controller` in the nelsonctl config (`provider`, `model`, `max_tool_calls`, `timeout`). The controller reads the agent's review output and makes the judgment call: is this phase done, or does the agent need to try again? It lives in `internal/controller/` and is completely separate from the agent adapters in `internal/agent/`.
+
+In short: **the agent builds the code, the controller judges it.** Confusingly, both are LLM-backed, but they answer different questions. The agent answers "what changes satisfy this spec?" The controller answers "did the agent's review output indicate success or failure?"
+
 ## The Workflow
 
 litespec has two halves:
@@ -32,7 +42,7 @@ After all phases pass, a final pre-archive review runs, then the branch is pushe
 - **One change per run.** Not multi-repo, not multi-change.
 - **Agents are pluggable.** The current scaffold shells out to agent CLIs (`opencode`, `claude`, `codex`, `amp`). Two upcoming changes replace this with direct RPC: **pi-rpc-integration** adds a long-lived Pi adapter (JSONL-RPC over stdio) and the **opencode-rpc-integration** adds an opencode adapter (HTTP to `opencode serve`). Both implement a shared `RPCAgent` interface with persistent sessions, per-step model selection, SSE streaming, and crash recovery. CLI adapters remain as a dumb-path fallback.
 - **No interactive prompting during execution.** This is a pipeline, not a chat app.
-- **Review detection is evolving.** Today it parses agent stdout for pass/fail markers ("pass", "lgtm", "fail", "rejected") with heuristic substring fallback. pi-rpc-integration replaces this with an AI controller.
+- **The controller replaced heuristic review detection.** Early versions parsed agent stdout for pass/fail markers ("pass", "lgtm", "fail", "rejected") with heuristic substring fallback. The controller (`internal/controller/`) now uses an LLM call to evaluate review output instead.
 
 ## Project Structure
 
