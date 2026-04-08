@@ -156,6 +156,10 @@ func New(cfg config.Config, opts ...Option) (Controller, error) {
 		return nil, err
 	}
 
+	if providerInfo.IsPoeResponses {
+		return newPoeResponsesController(cfg, credential, opts...)
+	}
+
 	controller := &openAIController{
 		controllerCfg: cfg.Controller,
 		model:         cfg.Controller.Model,

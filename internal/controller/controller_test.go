@@ -235,6 +235,20 @@ func TestNewUsesProviderEndpoints(t *testing.T) {
 	if poe.apiKey != "poe-oauth-token" {
 		t.Fatalf("poe oauth credential = %q", poe.apiKey)
 	}
+
+	cfg.Controller.Provider = config.ProviderPoeResponses
+	cfg.Controller.Model = "claude-3-5-sonnet"
+	controller, err = New(cfg)
+	if err != nil {
+		t.Fatalf("New() poe-responses error = %v", err)
+	}
+	pr := controller.(*poeResponsesController)
+	if pr.endpoint != "https://api.poe.com/bot/claude-3-5-sonnet" {
+		t.Fatalf("poe-responses endpoint = %q", pr.endpoint)
+	}
+	if pr.apiKey != "poe-oauth-token" {
+		t.Fatalf("poe-responses credential = %q", pr.apiKey)
+	}
 }
 
 type mockResponse struct {

@@ -19,13 +19,18 @@ nelsonctl specs/changes/initial-scaffold
 Minimal setup writes a Pi-first config with:
 
 - `agent: pi`
-- DeepSeek or OpenRouter controller configuration
+- OpenRouter controller configuration with a ready-to-use reasoning model
 - Step-specific apply/review/fix models and timeouts
 - `review.fail_on`
 
-## Controller configuration
+## Configuration overview
 
-The controller is configured in `~/.config/nelsonctl/config.yaml`.
+There are two separate AI configurations in `~/.config/nelsonctl/config.yaml`:
+
+- `agent` + `steps.*` configure the **coding agent** that edits code.
+- `controller.*` configures the **controller** that drives the apply/review/fix loop.
+
+Supported controller providers are `deepseek`, `openrouter`, `opencode`, `poe`, and `poe-responses`.
 
 ```yaml
 agent: pi
@@ -40,8 +45,8 @@ steps:
     model: minimax/minimax-m2.7
     timeout: 30m
 controller:
-  provider: deepseek
-  model: deepseek-reasoner
+  provider: openrouter
+  model: deepseek/deepseek-reasoner
   max_tool_calls: 50
   timeout: 45m
 review:
@@ -50,10 +55,74 @@ review:
 
 Credentials stay in environment variables and are never written into `config.yaml`.
 
-## Environment variables
+## Controller credentials
 
 - `DEEPSEEK_API_KEY` for `controller.provider: deepseek`
 - `OPENROUTER_API_KEY` for `controller.provider: openrouter`
+- `OPENROUTER_API_KEY` for `controller.provider: opencode`
+- `POE_API_KEY` or `POE_OAUTH_TOKEN` for `controller.provider: poe` and `controller.provider: poe-responses`
+
+### Poe controller provider
+
+Two Poe protocols are available:
+
+| Provider | API | Endpoint | Auth header |
+| --- | --- | --- | --- |
+| `poe` | Chat Completions (OpenAI-compatible) | `https://api.poe.com/v1/chat/completions` | `Authorization: Bearer ...` |
+| `poe-responses` | Responses (Poe native, recommended) | `https://api.poe.com/bot/{model}` | `Poe-API-Key: ...` |
+
+#### Chat Completions (`poe`)
+
+OpenAI-compatible, best for drop-in use with models that support it:
+
+```yaml
+controller:
+  provider: poe
+  model: claude-3-5-sonnet
+  max_tool_calls: 50
+  timeout: 45m
+```
+
+#### Responses API (`poe-responses`, recommended)
+
+Poe's native API. Sends `system_instruction`, `query`/`messages`, `tools`, `tool_calls`, and `tool_results` directly. The model name is embedded in the endpoint URL. Supports tool calling and multi-turn conversations:
+
+```yaml
+controller:
+  provider: poe-responses
+  model: claude-3-5-sonnet
+  max_tool_calls: 50
+  timeout: 45m
+```
+
+#### Authentication (both protocols)
+
+- API key: export `POE_API_KEY=poe-...`
+- OAuth: exchange a Poe PKCE auth code for an access token, then export it as `POE_OAUTH_TOKEN`
+- `POE_OAUTH_ACCESS_TOKEN` is also accepted as a fallback alias
+
+## Coding agent configuration
+
+`steps.apply.model`, `steps.review.model`, and `steps.fix.model` are passed directly to the selected coding agent, so the expected format depends on `agent`:
+
+| Agent | nelsonctl field | CLI flag | Expected value format |
+| --- | --- | --- | --- |
+| `pi` | `steps.*.model` | `--model` | `provider/id` or pattern, optionally `:thinking` |
+| `opencode` | `steps.*.model` | `--model` | `provider/model` |
+| `claude` | `steps.*.model` | `--model` | model alias or full model name |
+| `codex` | `steps.*.model` | `--model` | model id accepted by `codex exec --model` |
+| `amp` | `steps.*.model` | `--mode` | one of `deep`, `large`, `rush`, `smart` |
+
+These formats were checked against each agent's current `--help` output.
+
+### Agent-specific notes
+
+- `pi`: `pi --help` documents `--model` as `provider/id` or a fuzzy pattern, with optional `:thinking` suffix.
+- `opencode`: `opencode run --help` documents `--model` as `provider/model`.
+- `claude`: `claude --help` documents `--model` as an alias like `sonnet` or a full model name like `claude-sonnet-4-6`.
+- `amp`: `amp --help` uses `-m, --mode`, not `--model`. Nelsonctl maps `steps.*.model` to Amp's mode flag.
+
+If you use `opencode` with Poe as the provider, authenticate opencode itself first, typically with `opencode providers login --provider poe`, and select the OAuth method in the prompt.
 
 ## Flags
 
@@ -98,4 +167,4 @@ CLI agents remain supported when you explicitly select one with `--agent` or con
 
 - Run `nelsonctl` from the repository root.
 - The change path should point at a litespec change directory such as `specs/changes/add-dark-mode`.
-- Dry-run prints the resolved mode, agent, models, resume state, and remaining phase tasks without creating a lock or branch.
+- Dry-run prints the resolved mode, agent, step model/mode values, resume state, and remaining phase tasks without creating a lock or branch.

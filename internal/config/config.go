@@ -38,16 +38,18 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 type ControllerProvider string
 
 const (
-	ProviderDeepSeek   ControllerProvider = "deepseek"
-	ProviderOpenRouter ControllerProvider = "openrouter"
-	ProviderOpenCode   ControllerProvider = "opencode"
-	ProviderPoe        ControllerProvider = "poe"
+	ProviderDeepSeek     ControllerProvider = "deepseek"
+	ProviderOpenRouter   ControllerProvider = "openrouter"
+	ProviderOpenCode     ControllerProvider = "opencode"
+	ProviderPoe          ControllerProvider = "poe"
+	ProviderPoeResponses ControllerProvider = "poe-responses"
 )
 
 type ControllerProviderInfo struct {
 	Endpoint       string
 	EnvVars        []string
 	CredentialHint string
+	IsPoeResponses bool
 }
 
 var controllerProviderInfo = map[ControllerProvider]ControllerProviderInfo{
@@ -68,12 +70,19 @@ var controllerProviderInfo = map[ControllerProvider]ControllerProviderInfo{
 		EnvVars:        []string{"POE_API_KEY", "POE_OAUTH_TOKEN", "POE_OAUTH_ACCESS_TOKEN"},
 		CredentialHint: "POE_API_KEY or POE_OAUTH_TOKEN",
 	},
+	ProviderPoeResponses: {
+		Endpoint:       "https://api.poe.com/bot/",
+		EnvVars:        []string{"POE_API_KEY", "POE_OAUTH_TOKEN", "POE_OAUTH_ACCESS_TOKEN"},
+		CredentialHint: "POE_API_KEY or POE_OAUTH_TOKEN",
+		IsPoeResponses: true,
+	},
 }
 
 var controllerProviderAliases = map[ControllerProvider]ControllerProvider{
 	"open-code":   ProviderOpenCode,
 	"open-router": ProviderOpenRouter,
 	"poe.com":     ProviderPoe,
+	"poe.responses": ProviderPoeResponses,
 }
 
 type ReviewFailOn string
@@ -324,7 +333,7 @@ func LookupControllerProvider(provider ControllerProvider) (ControllerProviderIn
 }
 
 func SupportedControllerProviders() []ControllerProvider {
-	return []ControllerProvider{ProviderDeepSeek, ProviderOpenRouter, ProviderOpenCode, ProviderPoe}
+	return []ControllerProvider{ProviderDeepSeek, ProviderOpenRouter, ProviderOpenCode, ProviderPoe, ProviderPoeResponses}
 }
 
 func RequiredControllerEnvVar(provider ControllerProvider) string {

@@ -72,7 +72,7 @@ func TestWizardAdvancedSetup(t *testing.T) {
 	if !strings.Contains(out.String(), "Coding agent (pi|opencode|claude|codex|amp) [pi]: ") {
 		t.Fatalf("wizard output missing coding agent prompt: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "Controller provider (deepseek|openrouter|opencode|poe) [opencode]: ") {
+	if !strings.Contains(out.String(), "Controller provider (deepseek|openrouter|opencode|poe|poe-responses) [opencode]: ") {
 		t.Fatalf("wizard output missing provider prompt: %q", out.String())
 	}
 }
