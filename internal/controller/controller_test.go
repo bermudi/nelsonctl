@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,7 @@ func TestControllerRunsPhaseLoopAndApproves(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_API_KEY", "openrouter-key")
 	cfg := config.DefaultConfig()
 	controller, err := New(cfg, WithHTTPClient(server.Client()), WithEndpoint(server.URL))
 	if err != nil {
@@ -82,6 +84,7 @@ func TestControllerEnforcesToolBudget(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_API_KEY", "openrouter-key")
 	cfg := config.DefaultConfig()
 	cfg.Controller.MaxToolCalls = 2
 	controller, err := New(cfg, WithHTTPClient(server.Client()), WithEndpoint(server.URL))
@@ -100,6 +103,7 @@ func TestControllerEnforcesConversationTimeout(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_API_KEY", "openrouter-key")
 	cfg := config.DefaultConfig()
 	cfg.Controller.Timeout = config.Duration(10 * time.Millisecond)
 	controller, err := New(cfg, WithHTTPClient(server.Client()), WithEndpoint(server.URL))
@@ -118,6 +122,7 @@ func TestControllerRetriesAPIFailuresWithBackoff(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_API_KEY", "openrouter-key")
 	cfg := config.DefaultConfig()
 	var sleeps []time.Duration
 	controller, err := New(cfg,
@@ -150,6 +155,7 @@ func TestControllerFailsAfterPersistentAPIFailures(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_API_KEY", "openrouter-key")
 	cfg := config.DefaultConfig()
 	var sleeps []time.Duration
 	controller, err := New(cfg,
@@ -174,9 +180,21 @@ func TestControllerFailsAfterPersistentAPIFailures(t *testing.T) {
 func TestNewUsesProviderEndpoints(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "deepseek-key")
 	t.Setenv("OPENROUTER_API_KEY", "openrouter-key")
+	t.Setenv("POE_API_KEY", "poe-key")
+	t.Setenv("POE_OAUTH_TOKEN", "poe-oauth-token")
 
 	cfg := config.DefaultConfig()
 	controller, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() opencode error = %v", err)
+	}
+	oc := controller.(*openAIController)
+	if oc.endpoint != "https://openrouter.ai/api/v1/chat/completions" {
+		t.Fatalf("opencode endpoint = %q", oc.endpoint)
+	}
+
+	cfg.Controller.Provider = config.ProviderDeepSeek
+	controller, err = New(cfg)
 	if err != nil {
 		t.Fatalf("New() deepseek error = %v", err)
 	}
@@ -193,6 +211,29 @@ func TestNewUsesProviderEndpoints(t *testing.T) {
 	openrouter := controller.(*openAIController)
 	if openrouter.endpoint != "https://openrouter.ai/api/v1/chat/completions" {
 		t.Fatalf("openrouter endpoint = %q", openrouter.endpoint)
+	}
+
+	cfg.Controller.Provider = config.ProviderPoe
+	controller, err = New(cfg)
+	if err != nil {
+		t.Fatalf("New() poe error = %v", err)
+	}
+	poe := controller.(*openAIController)
+	if poe.endpoint != "https://api.poe.com/v1/chat/completions" {
+		t.Fatalf("poe endpoint = %q", poe.endpoint)
+	}
+	if poe.apiKey != "poe-key" {
+		t.Fatalf("poe credential = %q", poe.apiKey)
+	}
+
+	_ = os.Unsetenv("POE_API_KEY")
+	controller, err = New(cfg)
+	if err != nil {
+		t.Fatalf("New() poe oauth error = %v", err)
+	}
+	poe = controller.(*openAIController)
+	if poe.apiKey != "poe-oauth-token" {
+		t.Fatalf("poe oauth credential = %q", poe.apiKey)
 	}
 }
 

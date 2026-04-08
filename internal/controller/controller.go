@@ -146,17 +146,21 @@ type openAIController struct {
 }
 
 func New(cfg config.Config, opts ...Option) (Controller, error) {
-	endpoint, err := endpointForProvider(cfg.Controller.Provider)
+	providerInfo, ok := config.LookupControllerProvider(cfg.Controller.Provider)
+	if !ok {
+		return nil, fmt.Errorf("unsupported controller provider %q", cfg.Controller.Provider)
+	}
+
+	credential, _, err := config.ResolveControllerCredential(cfg.Controller.Provider, os.Getenv)
 	if err != nil {
 		return nil, err
 	}
 
-	apiKey := strings.TrimSpace(os.Getenv(config.RequiredControllerEnvVar(cfg.Controller.Provider)))
 	controller := &openAIController{
 		controllerCfg: cfg.Controller,
 		model:         cfg.Controller.Model,
-		endpoint:      endpoint,
-		apiKey:        apiKey,
+		endpoint:      providerInfo.Endpoint,
+		apiKey:        credential,
 		httpClient:    &http.Client{},
 		sleep:         time.Sleep,
 		retryAttempts: 3,
@@ -173,7 +177,7 @@ func New(cfg config.Config, opts ...Option) (Controller, error) {
 		return nil, errors.New("controller endpoint is required")
 	}
 	if controller.apiKey == "" {
-		return nil, fmt.Errorf("missing required controller credential %s", config.RequiredControllerEnvVar(cfg.Controller.Provider))
+		return nil, fmt.Errorf("missing required controller credential %s", config.ControllerCredentialHint(cfg.Controller.Provider))
 	}
 	if controller.controllerCfg.MaxToolCalls <= 0 {
 		return nil, errors.New("controller max tool calls must be greater than zero")
@@ -392,17 +396,6 @@ func ToolDefinitions() []ToolDefinition {
 				"additionalProperties": false,
 			},
 		},
-	}
-}
-
-func endpointForProvider(provider config.ControllerProvider) (string, error) {
-	switch provider {
-	case config.ProviderDeepSeek:
-		return "https://api.deepseek.com/chat/completions", nil
-	case config.ProviderOpenRouter:
-		return "https://openrouter.ai/api/v1/chat/completions", nil
-	default:
-		return "", fmt.Errorf("unsupported controller provider %q", provider)
 	}
 }
 

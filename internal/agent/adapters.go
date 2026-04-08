@@ -238,7 +238,7 @@ func NewAmp(opts ...Option) Agent {
 	return newCLIAdapter("amp", "amp", func(step Step, prompt, model string, format string) []string {
 		args := []string{"--execute", "--stream-json"}
 		if model != "" {
-			args = append(args, "--model", model)
+			args = append(args, "--mode", model)
 		}
 		args = append(args, prompt)
 		return args

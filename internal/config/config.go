@@ -40,7 +40,41 @@ type ControllerProvider string
 const (
 	ProviderDeepSeek   ControllerProvider = "deepseek"
 	ProviderOpenRouter ControllerProvider = "openrouter"
+	ProviderOpenCode   ControllerProvider = "opencode"
+	ProviderPoe        ControllerProvider = "poe"
 )
+
+type ControllerProviderInfo struct {
+	Endpoint       string
+	EnvVars        []string
+	CredentialHint string
+}
+
+var controllerProviderInfo = map[ControllerProvider]ControllerProviderInfo{
+	ProviderDeepSeek: {
+		Endpoint: "https://api.deepseek.com/chat/completions",
+		EnvVars:  []string{"DEEPSEEK_API_KEY"},
+	},
+	ProviderOpenRouter: {
+		Endpoint: "https://openrouter.ai/api/v1/chat/completions",
+		EnvVars:  []string{"OPENROUTER_API_KEY"},
+	},
+	ProviderOpenCode: {
+		Endpoint: "https://openrouter.ai/api/v1/chat/completions",
+		EnvVars:  []string{"OPENROUTER_API_KEY"},
+	},
+	ProviderPoe: {
+		Endpoint:       "https://api.poe.com/v1/chat/completions",
+		EnvVars:        []string{"POE_API_KEY", "POE_OAUTH_TOKEN", "POE_OAUTH_ACCESS_TOKEN"},
+		CredentialHint: "POE_API_KEY or POE_OAUTH_TOKEN",
+	},
+}
+
+var controllerProviderAliases = map[ControllerProvider]ControllerProvider{
+	"open-code":   ProviderOpenCode,
+	"open-router": ProviderOpenRouter,
+	"poe.com":     ProviderPoe,
+}
 
 type ReviewFailOn string
 
@@ -110,8 +144,8 @@ func DefaultConfig() Config {
 			},
 		},
 		Controller: ControllerConfig{
-			Provider:     ProviderDeepSeek,
-			Model:        "deepseek-reasoner",
+			Provider:     ProviderOpenCode,
+			Model:        "opencode-go/minimax-m2.7",
 			MaxToolCalls: 50,
 			Timeout:      Duration(45 * time.Minute),
 		},
@@ -185,7 +219,7 @@ func (c *Config) normalize() {
 	c.Steps.Apply.Model = strings.TrimSpace(c.Steps.Apply.Model)
 	c.Steps.Review.Model = strings.TrimSpace(c.Steps.Review.Model)
 	c.Steps.Fix.Model = strings.TrimSpace(c.Steps.Fix.Model)
-	c.Controller.Provider = ControllerProvider(strings.ToLower(strings.TrimSpace(string(c.Controller.Provider))))
+	c.Controller.Provider = NormalizeControllerProvider(c.Controller.Provider)
 	c.Controller.Model = strings.TrimSpace(c.Controller.Model)
 	c.Review.FailOn = ReviewFailOn(strings.ToLower(strings.TrimSpace(string(c.Review.FailOn))))
 }
@@ -193,6 +227,9 @@ func (c *Config) normalize() {
 func (c Config) Validate() error {
 	if !supportedAgent(c.Agent) {
 		return fmt.Errorf("unsupported agent %q", c.Agent)
+	}
+	if err := ValidateAgentStepConfig(c, c.Agent); err != nil {
+		return err
 	}
 
 	if err := validateStep("apply", c.Steps.Apply); err != nil {
@@ -205,9 +242,7 @@ func (c Config) Validate() error {
 		return err
 	}
 
-	switch c.Controller.Provider {
-	case ProviderDeepSeek, ProviderOpenRouter:
-	default:
+	if _, ok := LookupControllerProvider(c.Controller.Provider); !ok {
 		return fmt.Errorf("unsupported controller.provider %q", c.Controller.Provider)
 	}
 	if c.Controller.Model == "" {
@@ -240,12 +275,8 @@ func validateStep(name string, step StepConfig) error {
 }
 
 func supportedAgent(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "pi", "opencode", "claude", "codex", "amp":
-		return true
-	default:
-		return false
-	}
+	_, ok := LookupCodingAgent(name)
+	return ok
 }
 
 func ResolveAgent(cfg Config, cliAgent string) ResolvedAgent {
@@ -279,30 +310,83 @@ func (c Config) EffectiveTimeout() time.Duration {
 	return max
 }
 
-func RequiredControllerEnvVar(provider ControllerProvider) string {
-	switch provider {
-	case ProviderDeepSeek:
-		return "DEEPSEEK_API_KEY"
-	case ProviderOpenRouter:
-		return "OPENROUTER_API_KEY"
-	default:
-		return ""
+func NormalizeControllerProvider(provider ControllerProvider) ControllerProvider {
+	normalized := ControllerProvider(strings.ToLower(strings.TrimSpace(string(provider))))
+	if alias, ok := controllerProviderAliases[normalized]; ok {
+		return alias
 	}
+	return normalized
 }
 
-func ValidateControllerCredentials(cfg Config, getenv func(string) string) error {
+func LookupControllerProvider(provider ControllerProvider) (ControllerProviderInfo, bool) {
+	info, ok := controllerProviderInfo[NormalizeControllerProvider(provider)]
+	return info, ok
+}
+
+func SupportedControllerProviders() []ControllerProvider {
+	return []ControllerProvider{ProviderDeepSeek, ProviderOpenRouter, ProviderOpenCode, ProviderPoe}
+}
+
+func RequiredControllerEnvVar(provider ControllerProvider) string {
+	envVars := ControllerCredentialEnvVars(provider)
+	if len(envVars) == 0 {
+		return ""
+	}
+	return envVars[0]
+}
+
+func ControllerCredentialEnvVars(provider ControllerProvider) []string {
+	info, ok := LookupControllerProvider(provider)
+	if !ok {
+		return nil
+	}
+	return append([]string(nil), info.EnvVars...)
+}
+
+func ControllerCredentialHint(provider ControllerProvider) string {
+	info, ok := LookupControllerProvider(provider)
+	if !ok {
+		return ""
+	}
+	if strings.TrimSpace(info.CredentialHint) != "" {
+		return info.CredentialHint
+	}
+	return joinCredentialEnvVars(info.EnvVars)
+}
+
+func ResolveControllerCredential(provider ControllerProvider, getenv func(string) string) (string, string, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 
-	required := RequiredControllerEnvVar(cfg.Controller.Provider)
-	if required == "" {
-		return fmt.Errorf("unsupported controller.provider %q", cfg.Controller.Provider)
+	info, ok := LookupControllerProvider(provider)
+	if !ok {
+		return "", "", fmt.Errorf("unsupported controller.provider %q", provider)
 	}
-	if strings.TrimSpace(getenv(required)) == "" {
-		return fmt.Errorf("missing required controller credential %s", required)
+	for _, envVar := range info.EnvVars {
+		if value := strings.TrimSpace(getenv(envVar)); value != "" {
+			return value, envVar, nil
+		}
 	}
-	return nil
+	return "", "", fmt.Errorf("missing required controller credential %s", ControllerCredentialHint(provider))
+}
+
+func ValidateControllerCredentials(cfg Config, getenv func(string) string) error {
+	_, _, err := ResolveControllerCredential(cfg.Controller.Provider, getenv)
+	return err
+}
+
+func joinCredentialEnvVars(envVars []string) string {
+	switch len(envVars) {
+	case 0:
+		return ""
+	case 1:
+		return envVars[0]
+	case 2:
+		return envVars[0] + " or " + envVars[1]
+	default:
+		return strings.Join(envVars[:len(envVars)-1], ", ") + ", or " + envVars[len(envVars)-1]
+	}
 }
 
 func ValidateWorkspace(repoDir string) error {

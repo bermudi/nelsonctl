@@ -26,8 +26,8 @@ func TestLoadDefaultsWithoutConfigFile(t *testing.T) {
 	if cfg.Steps.Apply.Model != "minimax/minimax-m2.7" {
 		t.Fatalf("apply model = %q", cfg.Steps.Apply.Model)
 	}
-	if cfg.Controller.Provider != ProviderDeepSeek {
-		t.Fatalf("provider = %q, want %q", cfg.Controller.Provider, ProviderDeepSeek)
+	if cfg.Controller.Provider != ProviderOpenCode {
+		t.Fatalf("provider = %q, want %q", cfg.Controller.Provider, ProviderOpenCode)
 	}
 	if cfg.Controller.MaxToolCalls != 50 {
 		t.Fatalf("max_tool_calls = %d, want 50", cfg.Controller.MaxToolCalls)
@@ -98,7 +98,7 @@ func TestWriteOmitsCredentials(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 	text := string(data)
-	for _, forbidden := range []string{"DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "api_key:"} {
+	for _, forbidden := range []string{"DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "POE_API_KEY", "POE_OAUTH_TOKEN", "api_key:"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("config should not contain %q", forbidden)
 		}
@@ -107,8 +107,8 @@ func TestWriteOmitsCredentials(t *testing.T) {
 
 func TestValidateControllerCredentials(t *testing.T) {
 	cfg := DefaultConfig()
-	if err := ValidateControllerCredentials(cfg, func(key string) string { return "" }); err == nil || !strings.Contains(err.Error(), "DEEPSEEK_API_KEY") {
-		t.Fatalf("expected missing DEEPSEEK_API_KEY, got %v", err)
+	if err := ValidateControllerCredentials(cfg, func(key string) string { return "" }); err == nil || !strings.Contains(err.Error(), "OPENROUTER_API_KEY") {
+		t.Fatalf("expected missing OPENROUTER_API_KEY, got %v", err)
 	}
 
 	cfg.Controller.Provider = ProviderOpenRouter
@@ -119,6 +119,78 @@ func TestValidateControllerCredentials(t *testing.T) {
 		return ""
 	}); err != nil {
 		t.Fatalf("ValidateControllerCredentials() error = %v", err)
+	}
+
+	cfg.Controller.Provider = ProviderPoe
+	if err := ValidateControllerCredentials(cfg, func(key string) string {
+		if key == "POE_API_KEY" {
+			return "present"
+		}
+		return ""
+	}); err != nil {
+		t.Fatalf("ValidateControllerCredentials() poe api key error = %v", err)
+	}
+	if err := ValidateControllerCredentials(cfg, func(key string) string {
+		if key == "POE_OAUTH_TOKEN" {
+			return "present"
+		}
+		return ""
+	}); err != nil {
+		t.Fatalf("ValidateControllerCredentials() poe oauth error = %v", err)
+	}
+}
+
+func TestResolveControllerCredential(t *testing.T) {
+	value, source, err := ResolveControllerCredential(ProviderPoe, func(key string) string {
+		switch key {
+		case "POE_OAUTH_TOKEN":
+			return "oauth-token"
+		case "POE_API_KEY":
+			return ""
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatalf("ResolveControllerCredential() error = %v", err)
+	}
+	if value != "oauth-token" || source != "POE_OAUTH_TOKEN" {
+		t.Fatalf("ResolveControllerCredential() = %q, %q", value, source)
+	}
+
+	_, _, err = ResolveControllerCredential(ProviderPoe, func(string) string { return "" })
+	if err == nil || !strings.Contains(err.Error(), "POE_OAUTH_TOKEN") {
+		t.Fatalf("expected oauth hint, got %v", err)
+	}
+}
+
+func TestValidateAgentStepConfigAmp(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := ValidateAgentStepConfig(cfg, "pi"); err != nil {
+		t.Fatalf("ValidateAgentStepConfig(pi) error = %v", err)
+	}
+	if err := ValidateAgentStepConfig(cfg, "amp"); err == nil || !strings.Contains(err.Error(), "deep, large, rush, or smart") {
+		t.Fatalf("expected amp mode validation error, got %v", err)
+	}
+
+	cfg.Agent = "amp"
+	cfg.Steps.Apply.Model = "smart"
+	cfg.Steps.Review.Model = "deep"
+	cfg.Steps.Fix.Model = "rush"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("cfg.Validate() amp error = %v", err)
+	}
+}
+
+func TestNormalizeControllerProviderAliases(t *testing.T) {
+	if got := NormalizeControllerProvider("open-router"); got != ProviderOpenRouter {
+		t.Fatalf("NormalizeControllerProvider(open-router) = %q", got)
+	}
+	if got := NormalizeControllerProvider("open-code"); got != ProviderOpenCode {
+		t.Fatalf("NormalizeControllerProvider(open-code) = %q", got)
+	}
+	if got := NormalizeControllerProvider("poe.com"); got != ProviderPoe {
+		t.Fatalf("NormalizeControllerProvider(poe.com) = %q", got)
 	}
 }
 

@@ -16,56 +16,72 @@ type Wizard struct {
 func (w Wizard) Run(existing Config) (Config, error) {
 	reader := bufio.NewReader(w.In)
 	cfg := existing
+	defaults := DefaultConfig()
 
 	advanced, err := w.askYesNo(reader, "Use advanced setup? [y/N]: ", false)
 	if err != nil {
 		return Config{}, err
 	}
 	if !advanced {
-		cfg = DefaultConfig()
+		cfg = defaults
 		cfg.Controller.Provider = ProviderOpenRouter
 		cfg.Controller.Model = "deepseek/deepseek-reasoner"
 		return cfg, nil
 	}
 
-	if cfg.Agent, err = w.askString(reader, "Execution agent [pi]: ", fallbackString(existing.Agent, "pi")); err != nil {
+	agentDefault := fallbackString(existing.Agent, defaults.Agent)
+	agentPrompt := fmt.Sprintf("Coding agent (%s) [%s]: ", strings.Join(SupportedAgents(), "|"), agentDefault)
+	if cfg.Agent, err = w.askString(reader, agentPrompt, agentDefault); err != nil {
 		return Config{}, err
 	}
-	if cfg.Steps.Apply.Model, err = w.askString(reader, "Apply model [minimax/minimax-m2.7]: ", fallbackString(existing.Steps.Apply.Model, DefaultConfig().Steps.Apply.Model)); err != nil {
+	agentInfo, _ := LookupCodingAgent(cfg.Agent)
+	applyModelDefault := NormalizeAgentValue(cfg.Agent, fallbackString(existing.Steps.Apply.Model, defaults.Steps.Apply.Model))
+	if cfg.Steps.Apply.Model, err = w.askString(reader, agentValuePrompt("Apply", agentInfo, applyModelDefault), applyModelDefault); err != nil {
 		return Config{}, err
 	}
-	if cfg.Steps.Review.Model, err = w.askString(reader, "Review model [moonshotai/kimi-k2.5]: ", fallbackString(existing.Steps.Review.Model, DefaultConfig().Steps.Review.Model)); err != nil {
+	reviewModelDefault := NormalizeAgentValue(cfg.Agent, fallbackString(existing.Steps.Review.Model, defaults.Steps.Review.Model))
+	if cfg.Steps.Review.Model, err = w.askString(reader, agentValuePrompt("Review", agentInfo, reviewModelDefault), reviewModelDefault); err != nil {
 		return Config{}, err
 	}
-	if cfg.Steps.Fix.Model, err = w.askString(reader, "Fix model [minimax/minimax-m2.7]: ", fallbackString(existing.Steps.Fix.Model, DefaultConfig().Steps.Fix.Model)); err != nil {
+	fixModelDefault := NormalizeAgentValue(cfg.Agent, fallbackString(existing.Steps.Fix.Model, defaults.Steps.Fix.Model))
+	if cfg.Steps.Fix.Model, err = w.askString(reader, agentValuePrompt("Fix", agentInfo, fixModelDefault), fixModelDefault); err != nil {
 		return Config{}, err
 	}
-	if cfg.Steps.Apply.Timeout, err = w.askDuration(reader, "Apply timeout [30m]: ", fallbackDuration(existing.Steps.Apply.Timeout, DefaultConfig().Steps.Apply.Timeout)); err != nil {
+	applyTimeoutDefault := fallbackDuration(existing.Steps.Apply.Timeout, defaults.Steps.Apply.Timeout)
+	if cfg.Steps.Apply.Timeout, err = w.askDuration(reader, promptWithDefault("Apply timeout", applyTimeoutDefault.Std().String()), applyTimeoutDefault); err != nil {
 		return Config{}, err
 	}
-	if cfg.Steps.Review.Timeout, err = w.askDuration(reader, "Review timeout [15m]: ", fallbackDuration(existing.Steps.Review.Timeout, DefaultConfig().Steps.Review.Timeout)); err != nil {
+	reviewTimeoutDefault := fallbackDuration(existing.Steps.Review.Timeout, defaults.Steps.Review.Timeout)
+	if cfg.Steps.Review.Timeout, err = w.askDuration(reader, promptWithDefault("Review timeout", reviewTimeoutDefault.Std().String()), reviewTimeoutDefault); err != nil {
 		return Config{}, err
 	}
-	if cfg.Steps.Fix.Timeout, err = w.askDuration(reader, "Fix timeout [30m]: ", fallbackDuration(existing.Steps.Fix.Timeout, DefaultConfig().Steps.Fix.Timeout)); err != nil {
+	fixTimeoutDefault := fallbackDuration(existing.Steps.Fix.Timeout, defaults.Steps.Fix.Timeout)
+	if cfg.Steps.Fix.Timeout, err = w.askDuration(reader, promptWithDefault("Fix timeout", fixTimeoutDefault.Std().String()), fixTimeoutDefault); err != nil {
 		return Config{}, err
 	}
 
-	provider, err := w.askString(reader, "Controller provider [deepseek]: ", fallbackString(string(existing.Controller.Provider), string(DefaultConfig().Controller.Provider)))
+	providerDefault := fallbackString(string(existing.Controller.Provider), string(defaults.Controller.Provider))
+	providerPrompt := fmt.Sprintf("Controller provider (%s) [%s]: ", joinControllerProviders(), providerDefault)
+	provider, err := w.askString(reader, providerPrompt, providerDefault)
 	if err != nil {
 		return Config{}, err
 	}
 	cfg.Controller.Provider = ControllerProvider(provider)
-	if cfg.Controller.Model, err = w.askString(reader, "Controller model [deepseek-reasoner]: ", fallbackString(existing.Controller.Model, DefaultConfig().Controller.Model)); err != nil {
+	controllerModelDefault := fallbackString(existing.Controller.Model, defaults.Controller.Model)
+	if cfg.Controller.Model, err = w.askString(reader, promptWithDefault("Controller model", controllerModelDefault), controllerModelDefault); err != nil {
 		return Config{}, err
 	}
-	if cfg.Controller.MaxToolCalls, err = w.askInt(reader, "Controller max tool calls [50]: ", fallbackInt(existing.Controller.MaxToolCalls, DefaultConfig().Controller.MaxToolCalls)); err != nil {
+	maxToolCallsDefault := fallbackInt(existing.Controller.MaxToolCalls, defaults.Controller.MaxToolCalls)
+	if cfg.Controller.MaxToolCalls, err = w.askInt(reader, promptWithDefault("Controller max tool calls", fmt.Sprintf("%d", maxToolCallsDefault)), maxToolCallsDefault); err != nil {
 		return Config{}, err
 	}
-	if cfg.Controller.Timeout, err = w.askDuration(reader, "Controller timeout [45m]: ", fallbackDuration(existing.Controller.Timeout, DefaultConfig().Controller.Timeout)); err != nil {
+	controllerTimeoutDefault := fallbackDuration(existing.Controller.Timeout, defaults.Controller.Timeout)
+	if cfg.Controller.Timeout, err = w.askDuration(reader, promptWithDefault("Controller timeout", controllerTimeoutDefault.Std().String()), controllerTimeoutDefault); err != nil {
 		return Config{}, err
 	}
 
-	failOn, err := w.askString(reader, "Review fail_on [critical]: ", fallbackString(string(existing.Review.FailOn), string(DefaultConfig().Review.FailOn)))
+	failOnDefault := fallbackString(string(existing.Review.FailOn), string(defaults.Review.FailOn))
+	failOn, err := w.askString(reader, promptWithDefault("Review fail_on", failOnDefault), failOnDefault)
 	if err != nil {
 		return Config{}, err
 	}
@@ -148,6 +164,40 @@ func fallbackDuration(value, fallback Duration) Duration {
 		return value
 	}
 	return fallback
+}
+
+func promptWithDefault(label, fallback string) string {
+	return fmt.Sprintf("%s [%s]: ", label, fallback)
+}
+
+func agentValuePrompt(step string, info CodingAgentInfo, fallback string) string {
+	label := step + " " + info.StepValueLabel
+	if strings.TrimSpace(info.StepValueLabel) == "" {
+		label = step + " model"
+	}
+	hint := strings.TrimSpace(info.Name)
+	if flag := strings.TrimSpace(info.ArgumentFlag); flag != "" {
+		hint += " " + flag
+	}
+	if format := strings.TrimSpace(info.FormatHint); format != "" {
+		if hint != "" {
+			hint += ": " + format
+		} else {
+			hint = format
+		}
+	}
+	if hint != "" {
+		label += " (" + hint + ")"
+	}
+	return promptWithDefault(label, fallback)
+}
+
+func joinControllerProviders() string {
+	providers := make([]string, 0, len(SupportedControllerProviders()))
+	for _, provider := range SupportedControllerProviders() {
+		providers = append(providers, string(provider))
+	}
+	return strings.Join(providers, "|")
 }
 
 func boolDefault(v bool) string {

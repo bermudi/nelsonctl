@@ -167,3 +167,23 @@ func TestRunBuildsCommandsAndStreamsStdout(t *testing.T) {
 		})
 	}
 }
+
+func TestAmpUsesModeFlagForConfiguredValue(t *testing.T) {
+	agent := NewAmp(WithWorkDir("/repo"))
+	impl := agent.(*cliAdapter)
+	impl.lookupPath = func(binary string) (string, error) { return "/usr/bin/" + binary, nil }
+
+	var gotArgs []string
+	impl.runner = func(ctx context.Context, binary string, args []string, workDir string, timeout time.Duration, terminationGrace time.Duration, stdoutCallback StreamCallback) (*Result, error) {
+		gotArgs = append([]string(nil), args...)
+		return &Result{Stdout: "done", ExitCode: 0}, nil
+	}
+
+	if _, err := agent.ExecuteStep(context.Background(), StepApply, "implement phase 2", "smart"); err != nil {
+		t.Fatalf("ExecuteStep() error = %v", err)
+	}
+	want := []string{"--execute", "--stream-json", "--mode", "smart", "implement phase 2"}
+	if !reflect.DeepEqual(gotArgs, want) {
+		t.Fatalf("args = %#v, want %#v", gotArgs, want)
+	}
+}

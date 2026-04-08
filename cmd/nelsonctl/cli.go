@@ -47,6 +47,10 @@ func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, std
 	}
 
 	resolvedAgent := config.ResolveAgent(cfg, opts.agentName)
+	if err := config.ValidateAgentStepConfig(cfg, resolvedAgent.Name); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if err := config.ValidateWorkspace(cwd); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -220,9 +224,10 @@ func printDryRun(stdout io.Writer, changeArg, absChangePath string, cfg config.C
 	fmt.Fprintf(stdout, "Dry run for %s\n", changeArg)
 	fmt.Fprintf(stdout, "Mode: %s\n", resolved.Mode)
 	fmt.Fprintf(stdout, "Agent: %s\n", resolved.Name)
-	fmt.Fprintf(stdout, "Apply model: %s\n", cfg.Steps.Apply.Model)
-	fmt.Fprintf(stdout, "Review model: %s\n", cfg.Steps.Review.Model)
-	fmt.Fprintf(stdout, "Fix model: %s\n", cfg.Steps.Fix.Model)
+	valueLabel := titleLabel(config.CodingAgentValueLabel(resolved.Name))
+	fmt.Fprintf(stdout, "Apply %s: %s\n", valueLabel, cfg.Steps.Apply.Model)
+	fmt.Fprintf(stdout, "Review %s: %s\n", valueLabel, cfg.Steps.Review.Model)
+	fmt.Fprintf(stdout, "Fix %s: %s\n", valueLabel, cfg.Steps.Fix.Model)
 	fmt.Fprintf(stdout, "Review fail_on: %s\n", cfg.Review.FailOn)
 	fmt.Fprintf(stdout, "Branch: %s\n", branch)
 	fmt.Fprintf(stdout, "Resume: %t\n", resumed)
@@ -315,4 +320,15 @@ func toAgentTeaMsg(event agent.Event) tea.Msg {
 func parseDuration(s string) time.Duration {
 	d, _ := time.ParseDuration(s)
 	return d
+}
+
+func titleLabel(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "Model"
+	}
+	if len(trimmed) == 1 {
+		return strings.ToUpper(trimmed)
+	}
+	return strings.ToUpper(trimmed[:1]) + trimmed[1:]
 }
