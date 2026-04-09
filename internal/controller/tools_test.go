@@ -109,9 +109,12 @@ func TestToolDispatcherApproveSignalsCompletion(t *testing.T) {
 
 func TestToolDispatcherRejectsAbsolutePathByDefault(t *testing.T) {
 	dispatcher := NewToolDispatcher(Handlers{RepoDir: t.TempDir()})
-	_, err := dispatcher.Dispatch(context.Background(), ToolCall{ID: "1", Name: ToolReadFile, Arguments: []byte(`{"path":"/tmp/file.txt"}`)})
-	if err == nil || !strings.Contains(err.Error(), "absolute") {
-		t.Fatalf("expected absolute path error, got %v", err)
+	result, err := dispatcher.Dispatch(context.Background(), ToolCall{ID: "1", Name: ToolReadFile, Arguments: []byte(`{"path":"/tmp/file.txt"}`)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Content, "absolute") {
+		t.Fatalf("expected absolute path message in content, got %q", result.Content)
 	}
 }
 

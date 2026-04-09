@@ -61,6 +61,7 @@ type rpcEvent struct {
 
 type rpcAssistantMessageEvent struct {
 	Type string `json:"type,omitempty"`
+	Delta string `json:"delta,omitempty"`
 	Part struct {
 		Text string `json:"text,omitempty"`
 	} `json:"part,omitempty"`

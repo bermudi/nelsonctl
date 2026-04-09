@@ -580,6 +580,9 @@ func (p *Pipeline) emit(msg Event) {
 	if p.OnEvent != nil {
 		p.OnEvent(msg)
 	}
+	if os.Getenv("NELSONCTL_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] %T %+v\n", msg, msg)
+	}
 }
 
 func (p *Pipeline) waitIfPaused(ctx context.Context) {

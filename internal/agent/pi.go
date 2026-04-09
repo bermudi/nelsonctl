@@ -25,6 +25,7 @@ type piRPCAgent struct {
 	closed          bool
 	workspaceSkills []string
 	lastSessionByID map[string]string
+	activeSessionID string
 	newClient       func(workDir string, skills []string) rpcTransport
 }
 
@@ -101,6 +102,7 @@ func (a *piRPCAgent) StartImplementationSession(ctx context.Context) (string, er
 	defer a.mu.Unlock()
 	a.implSessionID = state.SessionID
 	a.implSessionPath = state.SessionFile
+	a.activeSessionID = state.SessionID
 	a.lastSessionByID[state.SessionID] = state.SessionFile
 	return state.SessionID, nil
 }
@@ -277,10 +279,23 @@ func (a *piRPCAgent) switchToSession(ctx context.Context, sessionID string) erro
 	if err != nil {
 		return a.restartAfterCrash(ctx, err)
 	}
+	a.mu.Lock()
+	a.activeSessionID = sessionID
+	a.mu.Unlock()
 	return nil
 }
 
 func (a *piRPCAgent) consumeSessionEvents(sessionID string, stdout *strings.Builder, done chan<- error) func() {
+	// Drain stale events from previous sessions before listening.
+	drain:
+	for {
+		select {
+		case <-a.events:
+		default:
+			break drain
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		for {
@@ -292,15 +307,18 @@ func (a *piRPCAgent) consumeSessionEvents(sessionID string, stdout *strings.Buil
 					done <- fmt.Errorf("pi process exited")
 					return
 				}
+				if os.Getenv("NELSONCTL_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "[DEBUG-agent] consume event: type=%s session_id=%q target_session=%q content_len=%d\n", event.Type, event.Metadata["session_id"], sessionID, len(event.Content))
+				}
 				if event.Metadata["session_id"] != "" && event.Metadata["session_id"] != sessionID {
 					continue
+				}
+				if event.Type == TextEvent {
+					stdout.WriteString(event.Content)
 				}
 				if event.Type == CompletionEvent {
 					done <- nil
 					return
-				}
-				if event.Type == TextEvent {
-					stdout.WriteString(event.Content)
 				}
 				if event.Type == ErrorEvent {
 					done <- errors.New(event.Content)
@@ -322,14 +340,36 @@ func (a *piRPCAgent) forwardEvents(client rpcTransport) {
 			continue
 		case "message_update":
 			content := event.Text
-			if event.AssistantUpdate != nil && event.AssistantUpdate.Part.Text != "" {
-				content = event.AssistantUpdate.Part.Text
+			if event.AssistantUpdate != nil {
+				switch event.AssistantUpdate.Type {
+				case "text_delta", "text_start":
+					if event.AssistantUpdate.Delta != "" {
+						content = event.AssistantUpdate.Delta
+					}
+					if event.AssistantUpdate.Part.Text != "" {
+						content = event.AssistantUpdate.Part.Text
+					}
+				case "thinking_delta", "thinking_start":
+					// Ignore thinking tokens — not user-visible text
+					content = ""
+				default:
+					// toolcall_*, text_end, thinking_end — no visible text
+					content = ""
+				}
 			}
 			if content != "" {
 				a.emit(Event{Type: TextEvent, Content: content, Metadata: map[string]string{"session_id": event.SessionID}})
 			}
 		case "agent_end":
-			a.emit(Event{Type: CompletionEvent, Content: "agent_end", Metadata: map[string]string{"session_id": event.SessionID}})
+			sessionID := event.SessionID
+			if sessionID == "" {
+				// agent_end events from Pi RPC don't include sessionId.
+				// Use the currently active session as fallback.
+				a.mu.Lock()
+				sessionID = a.activeSessionID
+				a.mu.Unlock()
+			}
+			a.emit(Event{Type: CompletionEvent, Content: "agent_end", Metadata: map[string]string{"session_id": sessionID}})
 		case "extension_error":
 			a.emit(Event{Type: ErrorEvent, Content: event.Error})
 		}

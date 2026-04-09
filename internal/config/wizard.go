@@ -43,7 +43,7 @@ func (w Wizard) Run(existing Config) (Config, error) {
 	if cfg.Steps.Review.Model, err = w.askString(reader, agentValuePrompt("Review", agentInfo, reviewModelDefault), reviewModelDefault); err != nil {
 		return Config{}, err
 	}
-	fixModelDefault := NormalizeAgentValue(cfg.Agent, fallbackString(existing.Steps.Fix.Model, defaults.Steps.Fix.Model))
+	fixModelDefault := NormalizeAgentValue(cfg.Agent, fallbackString(existing.Steps.Fix.Model, cfg.Steps.Apply.Model))
 	if cfg.Steps.Fix.Model, err = w.askString(reader, agentValuePrompt("Fix", agentInfo, fixModelDefault), fixModelDefault); err != nil {
 		return Config{}, err
 	}

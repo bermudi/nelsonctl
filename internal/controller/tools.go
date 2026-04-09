@@ -95,14 +95,14 @@ func (d *ToolDispatcher) Dispatch(ctx context.Context, call ToolCall) (DispatchR
 		}
 		path, err := d.resolvePath(args.Path)
 		if err != nil {
-			return DispatchResult{}, err
+			return DispatchResult{Content: err.Error()}, nil
 		}
 		content, err := d.handlers.ReadFile(ctx, path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return DispatchResult{Content: fmt.Sprintf("File %s does not exist.", filepath.ToSlash(args.Path))}, nil
 			}
-			return DispatchResult{}, fmt.Errorf("read_file %s: %w", args.Path, err)
+			return DispatchResult{Content: fmt.Sprintf("Error reading %s: %s", filepath.ToSlash(args.Path), err)}, nil
 		}
 		return DispatchResult{Content: content}, nil
 	case ToolGetDiff:

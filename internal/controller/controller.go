@@ -449,7 +449,7 @@ type openAIChoice struct {
 
 type openAIMessage struct {
 	Role       string               `json:"role"`
-	Content    string               `json:"content,omitempty"`
+	Content    string               `json:"content"`
 	ToolCallID string               `json:"tool_call_id,omitempty"`
 	ToolCalls  []openAIToolCallBody `json:"tool_calls,omitempty"`
 }

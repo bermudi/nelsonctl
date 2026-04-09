@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -226,6 +227,9 @@ func (c *rpcClient) readStdout() {
 				ch <- response
 			}
 			continue
+		}
+		if os.Getenv("NELSONCTL_DEBUG") != "" && envelope.Type != "response" {
+			fmt.Fprintf(os.Stderr, "[DEBUG-rpc] raw: %s\n", string(line))
 		}
 		var event rpcEvent
 		if err := json.Unmarshal(line, &event); err != nil {

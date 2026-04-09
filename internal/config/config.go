@@ -148,7 +148,6 @@ func DefaultConfig() Config {
 				Timeout: Duration(15 * time.Minute),
 			},
 			Fix: StepConfig{
-				Model:   "minimax/minimax-m2.7",
 				Timeout: Duration(30 * time.Minute),
 			},
 		},
@@ -231,6 +230,9 @@ func (c *Config) normalize() {
 	c.Controller.Provider = NormalizeControllerProvider(c.Controller.Provider)
 	c.Controller.Model = strings.TrimSpace(c.Controller.Model)
 	c.Review.FailOn = ReviewFailOn(strings.ToLower(strings.TrimSpace(string(c.Review.FailOn))))
+	if strings.TrimSpace(c.Steps.Fix.Model) == "" {
+		c.Steps.Fix.Model = c.Steps.Apply.Model
+	}
 }
 
 func (c Config) Validate() error {
