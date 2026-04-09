@@ -18,18 +18,18 @@
 - [x] Write tests verifying that a full pipeline run with a mock agent produces all expected new event types in the correct emission order
 
 ## Phase 2.5: Pi Adapter Event Capture
-- [ ] Add `TracePayload interface{}` field to the `Event` struct in `internal/agent/adapter.go`. When non-nil, it carries a typed adapter event struct. Regular output events (`TextEvent`, `CompletionEvent`, `ErrorEvent`) set it to `nil`
-- [ ] Define adapter event types in `internal/agent/adapter.go` as typed structs: `SessionCreatedEvent{SessionID, SessionType, ParentSession}`, `SessionSwitchedEvent{SessionID}`, `ModelSetEvent{Provider, Model, Success}`, `RPCRawEvent{RPCType, StopReason, SessionID}`, `EventsDrainedEvent{Count}`, `AgentRestartedEvent{Cause}` per `Pi Adapter Event Capture`
-- [ ] Update `internal/agent/pi.go` `StartImplementationSession` to emit a `SessionCreatedEvent` with `SessionType: "impl"` via `TracePayload` after session ID is obtained per `Pi Adapter Event Capture`
-- [ ] Update `internal/agent/pi.go` `StartReviewSession` to emit a `SessionCreatedEvent` with `SessionType: "review"` and `ParentSession` set to the implementation session path via `TracePayload` per `Pi Adapter Event Capture`
-- [ ] Update `internal/agent/pi.go` `switchToSession` to emit a `SessionSwitchedEvent` with the target session ID via `TracePayload` per `Pi Adapter Event Capture`
-- [ ] Update `internal/agent/pi.go` `SendMessage` to emit a `ModelSetEvent` after the `set_model` RPC call, with `Success` based on whether the call returned an error, via `TracePayload` per `Pi Adapter Event Capture`
-- [ ] Update `internal/agent/pi.go` `forwardEvents` to emit an `RPCRawEvent` for `agent_end` events, including `StopReason` from the RPC event data, via `TracePayload` per `Pi Adapter Event Capture`
-- [ ] Update `internal/agent/pi.go` `consumeSessionEvents` to emit an `EventsDrainedEvent` with the drain count after the drain loop, via `TracePayload` per `Pi Adapter Event Capture`
-- [ ] Update `internal/agent/pi.go` `restartAfterCrash` to emit an `AgentRestartedEvent` with the cause error via `TracePayload` per `Pi Adapter Event Capture`
-- [ ] Add trace event structs for adapter events to `internal/trace/events.go`: `SessionCreatedTraceEvent`, `SessionSwitchedTraceEvent`, `ModelSetTraceEvent`, `RPCRawTraceEvent`, `EventsDrainedTraceEvent`, `AgentRestartedTraceEvent` per `Event Type Registry`
-- [ ] Update `internal/trace/writer.go` `toTraceEvent` type switch to handle `Event.TracePayload` for the six adapter event types from `internal/agent/`. When `TracePayload` is non-nil, type-switch on it to map to the corresponding trace event structs. This adds a `trace → agent` import alongside the existing `trace → pipeline` import per `Pi Adapter Event Capture`
-- [ ] Write tests verifying that Pi adapter operations produce the correct adapter events through the `Events()` channel
+- [x] Add `TracePayload interface{}` field to the `Event` struct in `internal/agent/adapter.go`. When non-nil, it carries a typed adapter event struct. Regular output events (`TextEvent`, `CompletionEvent`, `ErrorEvent`) set it to `nil`
+- [x] Define adapter event types in `internal/agent/adapter.go` as typed structs: `SessionCreatedEvent{SessionID, SessionType, ParentSession}`, `SessionSwitchedEvent{SessionID}`, `ModelSetEvent{Provider, Model, Success}`, `RPCRawEvent{RPCType, StopReason, SessionID}`, `EventsDrainedEvent{Count}`, `AgentRestartedEvent{Cause}` per `Pi Adapter Event Capture`
+- [x] Update `internal/agent/pi.go` `StartImplementationSession` to emit a `SessionCreatedEvent` with `SessionType: "impl"` via `TracePayload` after session ID is obtained per `Pi Adapter Event Capture`
+- [x] Update `internal/agent/pi.go` `StartReviewSession` to emit a `SessionCreatedEvent` with `SessionType: "review"` and `ParentSession` set to the implementation session path via `TracePayload` per `Pi Adapter Event Capture`
+- [x] Update `internal/agent/pi.go` `switchToSession` to emit a `SessionSwitchedEvent` with the target session ID via `TracePayload` per `Pi Adapter Event Capture`
+- [x] Update `internal/agent/pi.go` `SendMessage` to emit a `ModelSetEvent` after the `set_model` RPC call, with `Success` based on whether the call returned an error, via `TracePayload` per `Pi Adapter Event Capture`
+- [x] Update `internal/agent/pi.go` `forwardEvents` to emit an `RPCRawEvent` for `agent_end` events, including `StopReason` from the RPC event data, via `TracePayload` per `Pi Adapter Event Capture`
+- [x] Update `internal/agent/pi.go` `consumeSessionEvents` to emit an `EventsDrainedEvent` with the drain count after the drain loop, via `TracePayload` per `Pi Adapter Event Capture`
+- [x] Update `internal/agent/pi.go` `restartAfterCrash` to emit an `AgentRestartedEvent` with the cause error via `TracePayload` per `Pi Adapter Event Capture`
+- [x] Add trace event structs for adapter events to `internal/trace/events.go`: `SessionCreatedTraceEvent`, `SessionSwitchedTraceEvent`, `ModelSetTraceEvent`, `RPCRawTraceEvent`, `EventsDrainedTraceEvent`, `AgentRestartedTraceEvent` per `Event Type Registry`
+- [x] Update `internal/trace/writer.go` `toTraceEvent` type switch to handle `Event.TracePayload` for the six adapter event types from `internal/agent/`. When `TracePayload` is non-nil, type-switch on it to map to the corresponding trace event structs. This adds a `trace → agent` import alongside the existing `trace → pipeline` import per `Pi Adapter Event Capture`
+- [x] Write tests verifying that Pi adapter operations produce the correct adapter events through the `Events()` channel
 
 ## Phase 3: CLI Wiring, Signal Handling, and Integration
 - [ ] Add `--trace` (bool, default true) and `--trace-dir` (string) flags to `cmd/nelsonctl/cli.go` per `Trace File Location`

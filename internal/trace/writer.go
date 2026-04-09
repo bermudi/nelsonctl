@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/bermudi/nelsonctl/internal/agent"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
 )
 
@@ -276,6 +277,56 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 			Title: e.Title,
 			URL:   e.URL,
 			Ts:    timestamp(),
+		}
+	case agent.Event:
+		if e.TracePayload == nil {
+			return nil
+		}
+		switch payload := e.TracePayload.(type) {
+		case agent.SessionCreatedEvent:
+			return SessionCreatedTraceEvent{
+				Type:          "session_created",
+				SessionID:     payload.SessionID,
+				SessionType:   payload.SessionType,
+				ParentSession: payload.ParentSession,
+				Ts:            timestamp(),
+			}
+		case agent.SessionSwitchedEvent:
+			return SessionSwitchedTraceEvent{
+				Type:      "session_switched",
+				SessionID: payload.SessionID,
+				Ts:        timestamp(),
+			}
+		case agent.ModelSetEvent:
+			return ModelSetTraceEvent{
+				Type:     "model_set",
+				Provider: payload.Provider,
+				Model:    payload.Model,
+				Success:  payload.Success,
+				Ts:       timestamp(),
+			}
+		case agent.RPCRawEvent:
+			return RPCRawTraceEvent{
+				Type:       "rpc_event",
+				RPCType:    payload.RPCType,
+				StopReason: payload.StopReason,
+				SessionID:  payload.SessionID,
+				Ts:         timestamp(),
+			}
+		case agent.EventsDrainedEvent:
+			return EventsDrainedTraceEvent{
+				Type:  "events_drained",
+				Count: payload.Count,
+				Ts:    timestamp(),
+			}
+		case agent.AgentRestartedEvent:
+			return AgentRestartedTraceEvent{
+				Type:  "agent_restarted",
+				Cause: payload.Cause,
+				Ts:    timestamp(),
+			}
+		default:
+			return nil
 		}
 	default:
 		return nil

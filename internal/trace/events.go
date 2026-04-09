@@ -52,6 +52,48 @@ type OutputChunkEvent struct {
 	Ts    string `json:"ts"`
 }
 
+type SessionCreatedTraceEvent struct {
+	Type          string `json:"type"`
+	SessionID     string `json:"session_id"`
+	SessionType   string `json:"session_type"`
+	ParentSession string `json:"parent_session,omitempty"`
+	Ts            string `json:"ts"`
+}
+
+type SessionSwitchedTraceEvent struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Ts        string `json:"ts"`
+}
+
+type ModelSetTraceEvent struct {
+	Type     string `json:"type"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Success  bool   `json:"success"`
+	Ts       string `json:"ts"`
+}
+
+type RPCRawTraceEvent struct {
+	Type       string `json:"type"`
+	RPCType    string `json:"rpc_type"`
+	StopReason string `json:"stop_reason,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	Ts         string `json:"ts"`
+}
+
+type EventsDrainedTraceEvent struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+	Ts    string `json:"ts"`
+}
+
+type AgentRestartedTraceEvent struct {
+	Type  string `json:"type"`
+	Cause string `json:"cause"`
+	Ts    string `json:"ts"`
+}
+
 type ExecutionContextEvent struct {
 	Type    string `json:"type"`
 	Mode    string `json:"mode"`

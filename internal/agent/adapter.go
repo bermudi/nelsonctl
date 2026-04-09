@@ -28,9 +28,40 @@ const (
 )
 
 type Event struct {
-	Type     EventType
-	Content  string
-	Metadata map[string]string
+	Type         EventType
+	Content      string
+	Metadata     map[string]string
+	TracePayload interface{}
+}
+
+type SessionCreatedEvent struct {
+	SessionID     string `json:"session_id"`
+	SessionType   string `json:"session_type"`
+	ParentSession string `json:"parent_session,omitempty"`
+}
+
+type SessionSwitchedEvent struct {
+	SessionID string `json:"session_id"`
+}
+
+type ModelSetEvent struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Success  bool   `json:"success"`
+}
+
+type RPCRawEvent struct {
+	RPCType    string `json:"rpc_type"`
+	StopReason string `json:"stop_reason,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+}
+
+type EventsDrainedEvent struct {
+	Count int `json:"count"`
+}
+
+type AgentRestartedEvent struct {
+	Cause string `json:"cause"`
 }
 
 type Result struct {

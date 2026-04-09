@@ -104,6 +104,7 @@ func (a *piRPCAgent) StartImplementationSession(ctx context.Context) (string, er
 	a.implSessionPath = state.SessionFile
 	a.activeSessionID = state.SessionID
 	a.lastSessionByID[state.SessionID] = state.SessionFile
+	a.emit(Event{TracePayload: SessionCreatedEvent{SessionID: state.SessionID, SessionType: "impl"}})
 	return state.SessionID, nil
 }
 
@@ -138,6 +139,7 @@ func (a *piRPCAgent) StartReviewSession(ctx context.Context) (string, error) {
 	a.lastSessionByID[state.SessionID] = state.SessionFile
 	implPath := a.implSessionPath
 	a.mu.Unlock()
+	a.emit(Event{TracePayload: SessionCreatedEvent{SessionID: state.SessionID, SessionType: "review", ParentSession: parent}})
 	if implPath != "" {
 		_, _ = a.client.Send(ctx, rpcCommand{Type: "switch_session", SessionPath: implPath})
 	}
@@ -155,8 +157,10 @@ func (a *piRPCAgent) SendMessage(ctx context.Context, sessionID, prompt, model s
 		provider, modelID := splitModel(model)
 		if provider != "" && modelID != "" {
 			if _, err := a.client.Send(ctx, rpcCommand{Type: "set_model", Provider: provider, ModelID: modelID}); err != nil {
+				a.emit(Event{TracePayload: ModelSetEvent{Provider: provider, Model: modelID, Success: false}})
 				return nil, a.restartAfterCrash(ctx, err)
 			}
+			a.emit(Event{TracePayload: ModelSetEvent{Provider: provider, Model: modelID, Success: true}})
 		}
 	}
 
@@ -286,19 +290,23 @@ func (a *piRPCAgent) switchToSession(ctx context.Context, sessionID string) erro
 	a.mu.Lock()
 	a.activeSessionID = sessionID
 	a.mu.Unlock()
+	a.emit(Event{TracePayload: SessionSwitchedEvent{SessionID: sessionID}})
 	return nil
 }
 
 func (a *piRPCAgent) consumeSessionEvents(sessionID string, stdout *strings.Builder, done chan<- error) func() {
 	// Drain stale events from previous sessions before listening.
+	drained := 0
 drain:
 	for {
 		select {
 		case <-a.events:
+			drained++
 		default:
 			break drain
 		}
 	}
+	a.emit(Event{TracePayload: EventsDrainedEvent{Count: drained}})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -373,6 +381,7 @@ func (a *piRPCAgent) forwardEvents(client rpcTransport) {
 				sessionID = a.activeSessionID
 				a.mu.Unlock()
 			}
+			a.emit(Event{TracePayload: RPCRawEvent{RPCType: event.Type, StopReason: stopReasonFromRPCEvent(event), SessionID: sessionID}})
 			a.emit(Event{Type: CompletionEvent, Content: "agent_end", Metadata: map[string]string{"session_id": sessionID}})
 		case "extension_error":
 			a.emit(Event{Type: ErrorEvent, Content: event.Error})
@@ -394,6 +403,7 @@ func (a *piRPCAgent) restartAfterCrash(ctx context.Context, cause error) error {
 	if err := a.ensureClient(ctx); err != nil {
 		return fmt.Errorf("restart pi after crash: %w", err)
 	}
+	a.emit(Event{TracePayload: AgentRestartedEvent{Cause: cause.Error()}})
 	a.emit(Event{Type: CompletionEvent, Content: "Nelson restarted Pi after a crash.", Metadata: map[string]string{"restart": "true"}})
 	return fmt.Errorf("pi process exited unexpectedly; restarted and current phase must be re-run: %w", cause)
 }
@@ -418,6 +428,36 @@ func splitModel(model string) (string, string) {
 		return "", ""
 	}
 	return parts[0], parts[1]
+}
+
+func stopReasonFromRPCEvent(event rpcEvent) string {
+	if stopReason, ok := extractStopReason(event.MessageData); ok {
+		return stopReason
+	}
+	for _, message := range event.Messages {
+		if stopReason, ok := extractStopReason(message); ok {
+			return stopReason
+		}
+	}
+	return ""
+}
+
+func extractStopReason(message map[string]any) (string, bool) {
+	if len(message) == 0 {
+		return "", false
+	}
+	if stopReason, ok := message["stopReason"].(string); ok && strings.TrimSpace(stopReason) != "" {
+		return stopReason, true
+	}
+	if stopReason, ok := message["stop_reason"].(string); ok && strings.TrimSpace(stopReason) != "" {
+		return stopReason, true
+	}
+	if nested, ok := message["message"].(map[string]any); ok {
+		if stopReason, ok := extractStopReason(nested); ok {
+			return stopReason, true
+		}
+	}
+	return "", false
 }
 
 func decodeState(response rpcResponse) (rpcGetStateData, error) {

@@ -90,6 +90,140 @@ func TestPiRPCAgentSessionLifecycle(t *testing.T) {
 	if got, want := transport.commandTypes(), []string{"get_state", "new_session", "get_state", "switch_session"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("commands = %#v, want %#v", got, want)
 	}
+
+	implEvent := expectTracePayload[SessionCreatedEvent](t, agent.Events())
+	if implEvent.SessionID != "impl-1" || implEvent.SessionType != "impl" {
+		t.Fatalf("impl session event = %+v", implEvent)
+	}
+
+	reviewEvent := expectTracePayload[SessionCreatedEvent](t, agent.Events())
+	if reviewEvent.SessionID != "review-1" || reviewEvent.SessionType != "review" || reviewEvent.ParentSession != "/tmp/impl-1.jsonl" {
+		t.Fatalf("review session event = %+v", reviewEvent)
+	}
+}
+
+func TestPiRPCAgentSwitchSessionEmitsTracePayload(t *testing.T) {
+	transport := &fakeTransport{
+		responses: []rpcResponse{
+			{Success: true, Command: "get_state", Data: map[string]any{"sessionId": "impl-1", "sessionFile": "/tmp/impl-1.jsonl"}},
+			{Success: true, Command: "switch_session"},
+		},
+		events: make(chan rpcEvent),
+	}
+	agent := NewPiRPC(WithWorkDir(t.TempDir())).(*piRPCAgent)
+	agent.newClient = func(workDir string, skills []string) rpcTransport { return transport }
+
+	implID, err := agent.StartImplementationSession(context.Background())
+	if err != nil {
+		t.Fatalf("StartImplementationSession() error = %v", err)
+	}
+	if implID != "impl-1" {
+		t.Fatalf("implID = %q", implID)
+	}
+	expectTracePayload[SessionCreatedEvent](t, agent.Events())
+
+	if err := agent.switchToSession(context.Background(), "impl-1"); err != nil {
+		t.Fatalf("switchToSession() error = %v", err)
+	}
+
+	switchedEvent := expectTracePayload[SessionSwitchedEvent](t, agent.Events())
+	if switchedEvent.SessionID != "impl-1" {
+		t.Fatalf("switched event = %+v", switchedEvent)
+	}
+	if got, want := transport.commandTypes(), []string{"get_state", "switch_session"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestPiRPCAgentSendMessageModelSetFailureEmitsTracePayloads(t *testing.T) {
+	first := &fakeTransport{
+		responses: []rpcResponse{
+			{Success: true, Command: "get_state", Data: map[string]any{"sessionId": "impl-1", "sessionFile": "/tmp/impl-1.jsonl"}},
+			{Success: true, Command: "switch_session"},
+		},
+		events:  make(chan rpcEvent),
+		failAt:  3,
+		failErr: fmt.Errorf("model missing"),
+	}
+	second := &fakeTransport{
+		responses: []rpcResponse{{Success: true, Command: "get_state", Data: map[string]any{"sessionId": "impl-2", "sessionFile": "/tmp/impl-2.jsonl"}}},
+		events:    make(chan rpcEvent),
+	}
+	agent := NewPiRPC(WithWorkDir(t.TempDir())).(*piRPCAgent)
+	starts := 0
+	agent.newClient = func(workDir string, skills []string) rpcTransport {
+		starts++
+		if starts == 1 {
+			return first
+		}
+		return second
+	}
+
+	implID, err := agent.StartImplementationSession(context.Background())
+	if err != nil {
+		t.Fatalf("StartImplementationSession() error = %v", err)
+	}
+	if implID != "impl-1" {
+		t.Fatalf("implID = %q", implID)
+	}
+	expectTracePayload[SessionCreatedEvent](t, agent.Events())
+
+	_, err = agent.SendMessage(context.Background(), "impl-1", "prompt", "opencode-go/kimi-k2.5")
+	if err == nil || !strings.Contains(err.Error(), "current phase must be re-run") {
+		t.Fatalf("expected restart error, got %v", err)
+	}
+
+	modelEvent := expectTracePayloadWhere(t, agent.Events(), func(event ModelSetEvent) bool {
+		return event.Provider == "opencode-go" && event.Model == "kimi-k2.5"
+	})
+	if modelEvent.Success {
+		t.Fatalf("model event = %+v", modelEvent)
+	}
+
+	restartedEvent := expectTracePayloadWhere(t, agent.Events(), func(event AgentRestartedEvent) bool {
+		return event.Cause == "model missing"
+	})
+	if restartedEvent.Cause != "model missing" {
+		t.Fatalf("restarted event = %+v", restartedEvent)
+	}
+
+	restartCompletion := expectEventWhere(t, agent.Events(), func(event Event) bool {
+		return event.Metadata["restart"] == "true"
+	})
+	if restartCompletion.Type != CompletionEvent {
+		t.Fatalf("restart completion = %+v", restartCompletion)
+	}
+	if starts != 2 {
+		t.Fatalf("starts = %d, want 2", starts)
+	}
+}
+
+func TestPiRPCAgentForwardEventsEmitsRPCRawTracePayload(t *testing.T) {
+	transport := &fakeTransport{events: make(chan rpcEvent, 1)}
+	agent := NewPiRPC(WithWorkDir(t.TempDir())).(*piRPCAgent)
+	agent.mu.Lock()
+	agent.activeSessionID = "impl-1"
+	agent.mu.Unlock()
+
+	go func() {
+		transport.events <- rpcEvent{Type: "agent_end", Messages: []map[string]any{{"stopReason": "toolUse"}}}
+		close(transport.events)
+	}()
+	go agent.forwardEvents(transport)
+
+	rpcEvent := expectTracePayloadWhere(t, agent.Events(), func(event RPCRawEvent) bool {
+		return event.RPCType == "agent_end"
+	})
+	if rpcEvent.StopReason != "toolUse" || rpcEvent.SessionID != "impl-1" {
+		t.Fatalf("rpc event = %+v", rpcEvent)
+	}
+
+	completionEvent := expectEventWhere(t, agent.Events(), func(event Event) bool {
+		return event.Type == CompletionEvent && event.Metadata["session_id"] == "impl-1"
+	})
+	if completionEvent.Type != CompletionEvent || completionEvent.Metadata["session_id"] != "impl-1" {
+		t.Fatalf("completion event = %+v", completionEvent)
+	}
 }
 
 func TestPiRPCAgentRestartsAfterCrash(t *testing.T) {
@@ -124,16 +258,78 @@ func TestPiRPCAgentRestartsAfterCrash(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "current phase must be re-run") {
 		t.Fatalf("expected crash restart error, got %v", err)
 	}
-	select {
-	case event := <-agent.Events():
-		if event.Metadata["restart"] != "true" {
-			t.Fatalf("restart event metadata = %#v", event.Metadata)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected restart event")
+	restartedEvent := expectTracePayloadWhere(t, agent.Events(), func(event AgentRestartedEvent) bool {
+		return event.Cause == "broken pipe"
+	})
+	if restartedEvent.Cause != "broken pipe" {
+		t.Fatalf("restart trace payload = %+v", restartedEvent)
+	}
+	restartCompletion := expectEventWhere(t, agent.Events(), func(event Event) bool {
+		return event.Metadata["restart"] == "true"
+	})
+	if restartCompletion.Type != CompletionEvent {
+		t.Fatalf("restart completion = %+v", restartCompletion)
 	}
 	if starts != 2 {
 		t.Fatalf("starts = %d, want 2", starts)
+	}
+}
+
+func expectAgentEvent(t *testing.T, events <-chan Event) Event {
+	t.Helper()
+	select {
+	case event, ok := <-events:
+		if !ok {
+			t.Fatal("agent event channel closed")
+		}
+		return event
+	case <-time.After(time.Second):
+		t.Fatal("expected agent event")
+		return Event{}
+	}
+}
+
+func expectTracePayload[T any](t *testing.T, events <-chan Event) T {
+	t.Helper()
+	return expectTracePayloadWhere(t, events, func(T) bool { return true })
+}
+
+func expectEventWhere(t *testing.T, events <-chan Event, match func(Event) bool) Event {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatal("agent event channel closed")
+			}
+			if match(event) {
+				return event
+			}
+		case <-deadline:
+			t.Fatal("expected matching agent event")
+		}
+	}
+}
+
+func expectTracePayloadWhere[T any](t *testing.T, events <-chan Event, match func(T) bool) T {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatal("agent event channel closed")
+			}
+			payload, ok := event.TracePayload.(T)
+			if ok && match(payload) {
+				return payload
+			}
+		case <-deadline:
+			var zero T
+			t.Fatal("expected matching trace payload")
+			return zero
+		}
 	}
 }
 

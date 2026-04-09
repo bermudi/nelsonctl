@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bermudi/nelsonctl/internal/agent"
 	"github.com/bermudi/nelsonctl/internal/pipeline"
 )
 
@@ -432,6 +433,68 @@ func TestToTraceEventExistingEvents(t *testing.T) {
 	unknownResult := tw.toTraceEvent("unknown")
 	if unknownResult != nil {
 		t.Errorf("expected nil for unknown input")
+	}
+}
+
+func TestToTraceEventAdapterTracePayloads(t *testing.T) {
+	tw := &TraceWriter{}
+
+	result := tw.toTraceEvent(agent.Event{TracePayload: agent.SessionCreatedEvent{SessionID: "impl-1", SessionType: "impl"}})
+	created, ok := result.(SessionCreatedTraceEvent)
+	if !ok {
+		t.Fatalf("expected SessionCreatedTraceEvent")
+	}
+	if created.Type != "session_created" || created.SessionID != "impl-1" || created.SessionType != "impl" {
+		t.Fatalf("unexpected session created event: %+v", created)
+	}
+
+	result = tw.toTraceEvent(agent.Event{TracePayload: agent.SessionSwitchedEvent{SessionID: "review-1"}})
+	switched, ok := result.(SessionSwitchedTraceEvent)
+	if !ok {
+		t.Fatalf("expected SessionSwitchedTraceEvent")
+	}
+	if switched.Type != "session_switched" || switched.SessionID != "review-1" {
+		t.Fatalf("unexpected session switched event: %+v", switched)
+	}
+
+	result = tw.toTraceEvent(agent.Event{TracePayload: agent.ModelSetEvent{Provider: "opencode-go", Model: "kimi-k2.5", Success: true}})
+	modelSet, ok := result.(ModelSetTraceEvent)
+	if !ok {
+		t.Fatalf("expected ModelSetTraceEvent")
+	}
+	if modelSet.Type != "model_set" || modelSet.Provider != "opencode-go" || modelSet.Model != "kimi-k2.5" || !modelSet.Success {
+		t.Fatalf("unexpected model_set event: %+v", modelSet)
+	}
+
+	result = tw.toTraceEvent(agent.Event{TracePayload: agent.RPCRawEvent{RPCType: "agent_end", StopReason: "toolUse", SessionID: "impl-1"}})
+	rpcEvent, ok := result.(RPCRawTraceEvent)
+	if !ok {
+		t.Fatalf("expected RPCRawTraceEvent")
+	}
+	if rpcEvent.Type != "rpc_event" || rpcEvent.RPCType != "agent_end" || rpcEvent.StopReason != "toolUse" || rpcEvent.SessionID != "impl-1" {
+		t.Fatalf("unexpected rpc event: %+v", rpcEvent)
+	}
+
+	result = tw.toTraceEvent(agent.Event{TracePayload: agent.EventsDrainedEvent{Count: 4}})
+	drained, ok := result.(EventsDrainedTraceEvent)
+	if !ok {
+		t.Fatalf("expected EventsDrainedTraceEvent")
+	}
+	if drained.Type != "events_drained" || drained.Count != 4 {
+		t.Fatalf("unexpected drained event: %+v", drained)
+	}
+
+	result = tw.toTraceEvent(agent.Event{TracePayload: agent.AgentRestartedEvent{Cause: "broken pipe"}})
+	restarted, ok := result.(AgentRestartedTraceEvent)
+	if !ok {
+		t.Fatalf("expected AgentRestartedTraceEvent")
+	}
+	if restarted.Type != "agent_restarted" || restarted.Cause != "broken pipe" {
+		t.Fatalf("unexpected restarted event: %+v", restarted)
+	}
+
+	if got := tw.toTraceEvent(agent.Event{}); got != nil {
+		t.Fatalf("expected nil for agent event without trace payload, got %#v", got)
 	}
 }
 
