@@ -110,9 +110,10 @@ func TestClientBuildsGitCommands(t *testing.T) {
 
 func TestClientReportsBranchDiffAndChangedFiles(t *testing.T) {
 	fake := &fakeExecutor{outputByArg: map[string][]byte{
-		"branch --show-current": []byte("change/demo\n"),
-		"diff":                  []byte("diff --git a/file b/file\n"),
-		"diff --name-only":      []byte("file1.go\nfile2.go\n"),
+		"branch --show-current":     []byte("change/demo\n"),
+		"diff":                      []byte("diff --git a/file b/file\n"),
+		"diff --name-only":          []byte("file1.go\nfile2.go\n"),
+		"diff --cached --name-only": []byte("staged1.go\nstaged2.go\n"),
 	}}
 	client := &Client{Dir: "/repo", Exec: fake}
 	ctx := context.Background()
@@ -131,6 +132,13 @@ func TestClientReportsBranchDiffAndChangedFiles(t *testing.T) {
 	}
 	if !reflect.DeepEqual(files, []string{"file1.go", "file2.go"}) {
 		t.Fatalf("ChangedFiles() = %#v", files)
+	}
+	staged, err := client.StagedFiles(ctx)
+	if err != nil {
+		t.Fatalf("StagedFiles() error = %v", err)
+	}
+	if !reflect.DeepEqual(staged, []string{"staged1.go", "staged2.go"}) {
+		t.Fatalf("StagedFiles() = %#v", staged)
 	}
 }
 

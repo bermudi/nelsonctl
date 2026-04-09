@@ -100,6 +100,15 @@ func (c *Client) ChangedFiles(ctx context.Context) ([]string, error) {
 	return splitLines(string(out)), nil
 }
 
+// StagedFiles returns staged paths from git diff --cached --name-only.
+func (c *Client) StagedFiles(ctx context.Context) ([]string, error) {
+	out, err := c.executor().Output(ctx, c.Dir, "git", "diff", "--cached", "--name-only")
+	if err != nil {
+		return nil, err
+	}
+	return splitLines(string(out)), nil
+}
+
 // HasTrackedChanges reports whether tracked files are modified.
 func (c *Client) HasTrackedChanges(ctx context.Context) (bool, error) {
 	err := c.executor().Run(ctx, c.Dir, "git", "diff", "--quiet")

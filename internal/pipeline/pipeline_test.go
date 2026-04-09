@@ -20,12 +20,13 @@ type fakeAgent struct {
 	calls   []string
 	results []agent.Result
 	errs    []error
+	rpc     agent.RPCAgent
 }
 
 func (f *fakeAgent) Name() string                                 { return "fake" }
 func (f *fakeAgent) CheckPrerequisites(ctx context.Context) error { return nil }
 func (f *fakeAgent) Cleanup(ctx context.Context) error            { return nil }
-func (f *fakeAgent) AsRPC() agent.RPCAgent                        { return nil }
+func (f *fakeAgent) AsRPC() agent.RPCAgent                        { return f.rpc }
 func (f *fakeAgent) Events() <-chan agent.Event                   { return nil }
 
 func (f *fakeAgent) ExecuteStep(ctx context.Context, step agent.Step, prompt, model string) (*agent.Result, error) {
@@ -52,6 +53,7 @@ type fakeGit struct {
 	currentBranch string
 	branchExist   bool
 	changedFiles  []string
+	stagedFiles   []string
 	diff          string
 	hasTracked    bool
 }
@@ -81,6 +83,14 @@ func (f *fakeGit) HasTrackedChanges(ctx context.Context) (bool, error) {
 
 func (f *fakeGit) ChangedFiles(ctx context.Context) ([]string, error) {
 	f.calls = append(f.calls, "changed-files")
+	return append([]string(nil), f.changedFiles...), nil
+}
+
+func (f *fakeGit) StagedFiles(ctx context.Context) ([]string, error) {
+	f.calls = append(f.calls, "staged-files")
+	if len(f.stagedFiles) > 0 {
+		return append([]string(nil), f.stagedFiles...), nil
+	}
 	return append([]string(nil), f.changedFiles...), nil
 }
 
@@ -124,11 +134,12 @@ func (f *fakeGit) Push(ctx context.Context, remote, branch string, setUpstream b
 type fakePR struct {
 	call string
 	note string
+	url  string
 }
 
-func (f *fakePR) Create(ctx context.Context, repoDir, title, bodyFile string) (string, error) {
+func (f *fakePR) Create(ctx context.Context, repoDir, title, bodyFile string) (string, string, error) {
 	f.call = repoDir + "|" + title + "|" + bodyFile
-	return f.note, nil
+	return f.note, f.url, nil
 }
 
 type fakeController struct {
@@ -165,8 +176,8 @@ func TestPipelineRunUsesControllerAndScopedPhaseCommit(t *testing.T) {
 	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
 
 	fa := &fakeAgent{results: []agent.Result{{Stdout: "apply ok"}, {Stdout: "review ok"}}}
-	git := &fakeGit{changedFiles: []string{"internal/pipeline/pipeline.go"}, diff: "diff --git a/file b/file"}
-	pr := &fakePR{note: "created"}
+	git := &fakeGit{changedFiles: []string{"internal/pipeline/pipeline.go"}, stagedFiles: []string{"internal/pipeline/pipeline.go"}, diff: "diff --git a/file b/file"}
+	pr := &fakePR{note: "created", url: "https://example.test/pr/1"}
 	controller := &fakeController{phaseFn: func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
 		if request.ReviewFailOn != config.FailOnWarning {
 			t.Fatalf("ReviewFailOn = %q", request.ReviewFailOn)
@@ -214,9 +225,11 @@ func TestPipelineRunUsesControllerAndScopedPhaseCommit(t *testing.T) {
 		"branch:change/initial-scaffold",
 		"has-tracked",
 		"add-all",
+		"staged-files",
 		"commit:chore: add litespec artifacts for initial-scaffold|Planning artifacts for initial-scaffold\n\nPhase 1: Foundation",
 		"changed-files",
 		"add:internal/pipeline/pipeline.go",
+		"staged-files",
 		"commit:feat(initial-scaffold): complete phase 1 - Foundation|Phase 1: Foundation\n- [x] Task one",
 		"push:origin|change/initial-scaffold|true",
 	}
@@ -244,7 +257,7 @@ func TestPipelineResumeCreatesRecoveryCommitAndStartsAtFirstUncheckedPhase(t *te
 	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
 
 	fa := &fakeAgent{results: []agent.Result{{Stdout: "apply ok"}, {Stdout: "review ok"}, {Stdout: "final ok"}}}
-	git := &fakeGit{currentBranch: "change/resume-test", branchExist: true, changedFiles: []string{"file.go"}, hasTracked: true}
+	git := &fakeGit{currentBranch: "change/resume-test", branchExist: true, changedFiles: []string{"file.go"}, stagedFiles: []string{"file.go"}, hasTracked: true}
 	controller := &fakeController{phaseFn: func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
 		if request.Phase.Number != 2 {
 			t.Fatalf("phase number = %d, want 2", request.Phase.Number)
@@ -327,6 +340,184 @@ func TestMechanicalReviewPrompt(t *testing.T) {
 	if got := MechanicalReviewPrompt("demo", true); !strings.Contains(got, "pre-archive mode") {
 		t.Fatalf("MechanicalReviewPrompt(true) = %q", got)
 	}
+}
+
+type fakeRPC struct {
+	sessionIDs map[agent.Step]string
+}
+
+func (f *fakeRPC) Name() string                                 { return "fake-rpc" }
+func (f *fakeRPC) CheckPrerequisites(ctx context.Context) error { return nil }
+func (f *fakeRPC) ExecuteStep(ctx context.Context, step agent.Step, prompt, model string) (*agent.Result, error) {
+	return nil, fmt.Errorf("unexpected ExecuteStep call")
+}
+func (f *fakeRPC) Cleanup(ctx context.Context) error { return nil }
+func (f *fakeRPC) AsRPC() agent.RPCAgent             { return f }
+func (f *fakeRPC) Events() <-chan agent.Event        { return nil }
+func (f *fakeRPC) StartImplementationSession(ctx context.Context) (string, error) {
+	return f.sessionIDs[agent.StepApply], nil
+}
+func (f *fakeRPC) StartReviewSession(ctx context.Context) (string, error) {
+	return f.sessionIDs[agent.StepReview], nil
+}
+func (f *fakeRPC) SendMessage(ctx context.Context, sessionID, prompt, model string) (*agent.Result, error) {
+	return nil, fmt.Errorf("unexpected SendMessage call")
+}
+func (f *fakeRPC) SessionForStep(ctx context.Context, step agent.Step) (string, error) {
+	return f.sessionIDs[step], nil
+}
+func (f *fakeRPC) Abort(ctx context.Context, sessionID string) error { return nil }
+func (f *fakeRPC) Close() error                                      { return nil }
+
+func TestPipelineEmitsTraceEventsInOrder(t *testing.T) {
+	tmp := t.TempDir()
+	changeDir := filepath.Join(tmp, "specs", "changes", "trace-order")
+	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n")
+	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
+
+	fa := &fakeAgent{
+		results: []agent.Result{
+			{Stdout: "apply ok", ExitCode: 0, Duration: 10 * time.Millisecond},
+			{Stdout: "no issues found", ExitCode: 0, Duration: 20 * time.Millisecond},
+			{Stdout: "approved", ExitCode: 0, Duration: 30 * time.Millisecond},
+		},
+		rpc: &fakeRPC{sessionIDs: map[agent.Step]string{
+			agent.StepApply:       "impl-session",
+			agent.StepReview:      "review-session",
+			agent.StepFinalReview: "final-session",
+		}},
+	}
+	git := &fakeGit{changedFiles: []string{"internal/pipeline/pipeline.go"}, stagedFiles: []string{"internal/pipeline/pipeline.go"}}
+	pr := &fakePR{url: "https://example.test/pr/trace-order"}
+	controller := &fakeController{phaseFn: func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "1", Name: ctrl.ToolSubmitPrompt, Arguments: []byte(`{"prompt":"apply this phase"}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "2", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)}); err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{Summary: "phase passed"}, nil
+	}, finalFn: func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)}); err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{Summary: "final passed"}, nil
+	}}
+
+	var events []Event
+	p := &Pipeline{
+		ChangePath:  changeDir,
+		RepoDir:     tmp,
+		Agent:       fa,
+		Controller:  controller,
+		Git:         git,
+		PR:          pr,
+		MaxAttempts: 3,
+		Config:      config.Config{Steps: config.DefaultConfig().Steps},
+		AgentName:   "pi",
+		OnEvent: func(msg Event) {
+			events = append(events, msg)
+		},
+		processExists: func(pid int) bool { return false },
+		now:           time.Now,
+	}
+
+	if _, err := p.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	assertEventTypeSubsequence(t, events,
+		"pipeline.StateEvent",
+		"pipeline.StateEvent",
+		"pipeline.StateEvent",
+		"pipeline.GitCommitEvent",
+		"pipeline.StateEvent",
+		"pipeline.PhaseStartEvent",
+		"pipeline.ControllerActivityEvent",
+		"pipeline.ExecutionContextEvent",
+		"pipeline.AgentInvokeEvent",
+		"pipeline.AgentResultEvent",
+		"pipeline.OutputEvent",
+		"pipeline.ControllerActivityEvent",
+		"pipeline.ExecutionContextEvent",
+		"pipeline.AgentInvokeEvent",
+		"pipeline.AgentResultEvent",
+		"pipeline.OutputEvent",
+		"pipeline.ReviewResultEvent",
+		"pipeline.ControllerActivityEvent",
+		"pipeline.PhaseResultEvent",
+		"pipeline.GitCommitEvent",
+		"pipeline.StateEvent",
+		"pipeline.ControllerActivityEvent",
+		"pipeline.ExecutionContextEvent",
+		"pipeline.AgentInvokeEvent",
+		"pipeline.AgentResultEvent",
+		"pipeline.OutputEvent",
+		"pipeline.ReviewResultEvent",
+		"pipeline.ControllerActivityEvent",
+		"pipeline.StateEvent",
+		"pipeline.GitPushEvent",
+		"pipeline.PREvent",
+		"pipeline.SummaryEvent",
+		"pipeline.StateEvent",
+	)
+
+	phaseReview := findEvent[ReviewResultEvent](t, events, func(e ReviewResultEvent) bool { return e.Step == "phase" })
+	if !phaseReview.Passed || phaseReview.Phase != 1 || phaseReview.Attempt != 1 {
+		t.Fatalf("unexpected phase review event: %+v", phaseReview)
+	}
+	finalReview := findEvent[ReviewResultEvent](t, events, func(e ReviewResultEvent) bool { return e.Step == "final" })
+	if !finalReview.Passed || finalReview.Phase != 0 || finalReview.Attempt != 1 {
+		t.Fatalf("unexpected final review event: %+v", finalReview)
+	}
+	applyInvoke := findEvent[AgentInvokeEvent](t, events, func(e AgentInvokeEvent) bool { return e.Step == string(agent.StepApply) })
+	if applyInvoke.SessionID != "impl-session" || applyInvoke.WorkDir != tmp {
+		t.Fatalf("unexpected apply invoke event: %+v", applyInvoke)
+	}
+	pushEvent := findEvent[GitPushEvent](t, events, func(e GitPushEvent) bool { return true })
+	if pushEvent.Remote != "origin" || pushEvent.Branch != "change/trace-order" {
+		t.Fatalf("unexpected push event: %+v", pushEvent)
+	}
+	prEvent := findEvent[PREvent](t, events, func(e PREvent) bool { return true })
+	if prEvent.URL != "https://example.test/pr/trace-order" {
+		t.Fatalf("unexpected PR event: %+v", prEvent)
+	}
+}
+
+func assertEventTypeSubsequence(t *testing.T, events []Event, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(events))
+	for _, event := range events {
+		got = append(got, fmt.Sprintf("%T", event))
+	}
+	idx := 0
+	for _, eventType := range got {
+		if idx < len(want) && eventType == want[idx] {
+			idx++
+		}
+	}
+	if idx != len(want) {
+		t.Fatalf("event subsequence = %#v, want %#v", got, want)
+	}
+}
+
+func findEvent[T any](t *testing.T, events []Event, match func(T) bool) T {
+	t.Helper()
+	for _, event := range events {
+		typed, ok := event.(T)
+		if ok && match(typed) {
+			return typed
+		}
+	}
+	var zero T
+	t.Fatalf("event %T not found", zero)
+	return zero
 }
 
 func mustWriteFile(t *testing.T, path, content string) {

@@ -116,6 +116,7 @@ type RPCAgent interface {
 	StartImplementationSession(ctx context.Context) (string, error)
 	StartReviewSession(ctx context.Context) (string, error)
 	SendMessage(ctx context.Context, sessionID, prompt, model string) (*Result, error)
+	SessionForStep(ctx context.Context, step Step) (string, error)
 	Abort(ctx context.Context, sessionID string) error
 	Close() error
 }

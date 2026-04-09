@@ -268,6 +268,10 @@ func (a *piRPCAgent) sessionForStep(ctx context.Context, step Step) (string, err
 	}
 }
 
+func (a *piRPCAgent) SessionForStep(ctx context.Context, step Step) (string, error) {
+	return a.sessionForStep(ctx, step)
+}
+
 func (a *piRPCAgent) switchToSession(ctx context.Context, sessionID string) error {
 	a.mu.Lock()
 	sessionPath := a.lastSessionByID[sessionID]
@@ -287,7 +291,7 @@ func (a *piRPCAgent) switchToSession(ctx context.Context, sessionID string) erro
 
 func (a *piRPCAgent) consumeSessionEvents(sessionID string, stdout *strings.Builder, done chan<- error) func() {
 	// Drain stale events from previous sessions before listening.
-	drain:
+drain:
 	for {
 		select {
 		case <-a.events:

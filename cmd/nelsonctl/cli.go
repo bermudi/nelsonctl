@@ -263,8 +263,8 @@ func statesToStrings(states []pipeline.State) []string {
 
 type noopPullRequestCreator struct{}
 
-func (noopPullRequestCreator) Create(ctx context.Context, repoDir, title, bodyFile string) (string, error) {
-	return "PR creation skipped (--no-pr)", nil
+func (noopPullRequestCreator) Create(ctx context.Context, repoDir, title, bodyFile string) (string, string, error) {
+	return "PR creation skipped (--no-pr)", "", nil
 }
 
 func toTeaMsg(msg pipeline.Event) tea.Msg {

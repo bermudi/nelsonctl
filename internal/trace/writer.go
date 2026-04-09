@@ -162,9 +162,10 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 	switch e := msg.(type) {
 	case pipeline.StateEvent:
 		return StateChangeEvent{
-			Type:  "state_change",
-			State: string(e.State),
-			Ts:    timestamp(),
+			Type:         "state_change",
+			State:        string(e.State),
+			BranchReused: e.BranchReused,
+			Ts:           timestamp(),
 		}
 	case pipeline.PhaseStartEvent:
 		return PhaseStartEvent{
@@ -224,6 +225,57 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 			Attempts: e.Attempts,
 			Review:   e.Review,
 			Ts:       timestamp(),
+		}
+	case pipeline.AgentInvokeEvent:
+		return AgentInvokeEvent{
+			Type:      "agent_invoke",
+			Agent:     e.Agent,
+			Step:      e.Step,
+			Model:     e.Model,
+			SessionID: e.SessionID,
+			Prompt:    e.Prompt,
+			WorkDir:   e.WorkDir,
+			Ts:        timestamp(),
+		}
+	case pipeline.AgentResultEvent:
+		return AgentResultEvent{
+			Type:       "agent_result",
+			ExitCode:   e.ExitCode,
+			DurationMs: e.DurationMs,
+			StdoutLen:  e.StdoutLen,
+			StderrLen:  e.StderrLen,
+			Ts:         timestamp(),
+		}
+	case pipeline.ReviewResultEvent:
+		return ReviewResultEvent{
+			Type:    "review_result",
+			Passed:  e.Passed,
+			Output:  e.Output,
+			Attempt: e.Attempt,
+			Step:    e.Step,
+			Phase:   e.Phase,
+			Ts:      timestamp(),
+		}
+	case pipeline.GitCommitEvent:
+		return GitCommitEvent{
+			Type:    "git_commit",
+			Subject: e.Subject,
+			Files:   e.Files,
+			Ts:      timestamp(),
+		}
+	case pipeline.GitPushEvent:
+		return GitPushEvent{
+			Type:   "git_push",
+			Remote: e.Remote,
+			Branch: e.Branch,
+			Ts:     timestamp(),
+		}
+	case pipeline.PREvent:
+		return PREvent{
+			Type:  "pr_created",
+			Title: e.Title,
+			URL:   e.URL,
+			Ts:    timestamp(),
 		}
 	default:
 		return nil

@@ -2,8 +2,6 @@ package trace
 
 import "time"
 
-type executionMode string
-
 type RunMetaEvent struct {
 	Type      string `json:"type"`
 	Version   string `json:"version"`
@@ -29,11 +27,14 @@ type PhaseStartEvent struct {
 }
 
 type AgentInvokeEvent struct {
-	Type    string `json:"type"`
-	Agent   string `json:"agent"`
-	Prompt  string `json:"prompt"`
-	WorkDir string `json:"work_dir"`
-	Ts      string `json:"ts"`
+	Type      string `json:"type"`
+	Agent     string `json:"agent"`
+	Step      string `json:"step"`
+	Model     string `json:"model"`
+	SessionID string `json:"session_id,omitempty"`
+	Prompt    string `json:"prompt"`
+	WorkDir   string `json:"work_dir"`
+	Ts        string `json:"ts"`
 }
 
 type AgentResultEvent struct {
