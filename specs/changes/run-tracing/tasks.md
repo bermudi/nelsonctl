@@ -32,11 +32,11 @@
 - [x] Write tests verifying that Pi adapter operations produce the correct adapter events through the `Events()` channel
 
 ## Phase 3: CLI Wiring, Signal Handling, and Integration
-- [ ] Add `--trace` (bool, default true) and `--trace-dir` (string) flags to `cmd/nelsonctl/cli.go` per `Trace File Location`
-- [ ] Resolve trace directory: `--trace-dir` > `$XDG_DATA_HOME/nelsonctl/traces` > `~/.local/share/nelsonctl/traces`, create directory with mode `0700` if missing per `Trace File Location`
-- [ ] Generate trace filename using ISO 8601 basic timestamp, change name, and agent name per `Trace File Naming`
-- [ ] Wire `TraceWriter.Send` into the `OnEvent` handler in `cli.go` for the TUI path: wrap the existing `toTeaMsg` closure and `TraceWriter.Send` into a fan-out closure. For Pi agent, also start a goroutine draining `agent.Events()` and forwarding to `TraceWriter.Send` per `Trace Emission in All Execution Modes` and `Pi Adapter Event Capture`
-- [ ] Wire `TraceWriter.Send` into the `OnEvent` handler in `cli.go` for the verbose path: set `p.OnEvent` to a closure that dispatches to `TraceWriter.Send`. For Pi agent, also start a goroutine draining `agent.Events()` and forwarding to `TraceWriter.Send` per `Trace Emission in All Execution Modes` and `Pi Adapter Event Capture`
-- [ ] Defer `TraceWriter.Close()` after `p.Run()` returns in both TUI and verbose paths to emit the `run_end` event on normal completion. Signal handler goroutine also calls `Close()` — use a `sync.Once` to prevent double-close per `Run End Event`
-- [ ] Set up signal handling: `os/signal.Notify` for SIGINT/SIGTERM into a channel, goroutine that calls `TraceWriter.Close()` on signal receipt (no I/O in signal handler) per `Trace Flush on Exit`
-- [ ] Update `cmd/nelsonctl/cli_test.go` to verify trace files are produced in both TUI and verbose mode integration tests, and that trace content includes `run_meta`, at least one `state_change`, and `run_end` events
+- [x] Add `--trace` (bool, default true) and `--trace-dir` (string) flags to `cmd/nelsonctl/cli.go` per `Trace File Location`
+- [x] Resolve trace directory: `--trace-dir` > `$XDG_DATA_HOME/nelsonctl/traces` > `~/.local/share/nelsonctl/traces`, create directory with mode `0700` if missing per `Trace File Location`
+- [x] Generate trace filename using ISO 8601 basic timestamp, change name, and agent name per `Trace File Naming`
+- [x] Wire `TraceWriter.Send` into the `OnEvent` handler in `cli.go` for the TUI path: wrap the existing `toTeaMsg` closure and `TraceWriter.Send` into a fan-out closure. For Pi agent, also start a goroutine draining `agent.Events()` and forwarding to `TraceWriter.Send` per `Trace Emission in All Execution Modes` and `Pi Adapter Event Capture`
+- [x] Wire `TraceWriter.Send` into the `OnEvent` handler in `cli.go` for the verbose path: set `p.OnEvent` to a closure that dispatches to `TraceWriter.Send`. For Pi agent, also start a goroutine draining `agent.Events()` and forwarding to `TraceWriter.Send` per `Trace Emission in All Execution Modes` and `Pi Adapter Event Capture`
+- [x] Defer `TraceWriter.Close()` after `p.Run()` returns in both TUI and verbose paths to emit the `run_end` event on normal completion. Signal handler goroutine also calls `Close()` — use a `sync.Once` to prevent double-close per `Run End Event`
+- [x] Set up signal handling: `os/signal.Notify` for SIGINT/SIGTERM into a channel, goroutine that calls `TraceWriter.Close()` on signal receipt (no I/O in signal handler) per `Trace Flush on Exit`
+- [x] Update `cmd/nelsonctl/cli_test.go` to verify trace files are produced in both TUI and verbose mode integration tests, and that trace content includes `run_meta`, at least one `state_change`, and `run_end` events

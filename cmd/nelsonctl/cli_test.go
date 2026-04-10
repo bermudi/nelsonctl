@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -153,7 +156,8 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	code := runCLI(context.Background(), []string{"--verbose", changeDir}, repoRoot, strings.NewReader(""), stdout, stderr)
+	traceDir := filepath.Join(repoRoot, "traces-verbose")
+	code := runCLI(context.Background(), []string{"--verbose", "--trace-dir", traceDir, changeDir}, repoRoot, strings.NewReader(""), stdout, stderr)
 	if code != 0 {
 		t.Fatalf("runCLI() code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
 	}
@@ -195,6 +199,8 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	if !strings.Contains(ghLogData, "gh pr create --title initial-scaffold --body-file") {
 		t.Fatalf("gh log missing pr create: %q", ghLogData)
 	}
+
+	assertSingleTraceFileContains(t, traceDir, []string{"run_meta", "state_change", "run_end"})
 }
 
 func TestRunCLIDryRunSkipsExecution(t *testing.T) {
@@ -338,6 +344,121 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	}
 }
 
+func TestRunCLITUIProducesTrace(t *testing.T) {
+	oldNewController := newController
+	newController = func(cfg config.Config, opts ...controller.Option) (controller.Controller, error) {
+		return stubController{}, nil
+	}
+	defer func() { newController = oldNewController }()
+
+	repoRoot := t.TempDir()
+	changeDir := filepath.Join(repoRoot, "specs", "changes", "initial-scaffold")
+	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Initialize Go module\n")
+	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
+	configHome := t.TempDir()
+	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
+		"agent: opencode",
+		"steps:",
+		"  apply:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 1s",
+		"  review:",
+		"    model: moonshotai/kimi-k2.5",
+		"    timeout: 1s",
+		"  fix:",
+		"    model: minimax/minimax-m2.7",
+		"    timeout: 1s",
+		"controller:",
+		"  provider: openrouter",
+		"  model: deepseek/deepseek-reasoner",
+		"  max_tool_calls: 50",
+		"  timeout: 45m",
+		"review:",
+		"  fail_on: critical",
+	}, "\n"))
+
+	binDir := t.TempDir()
+	gitLog := filepath.Join(repoRoot, "git.log")
+	mustWriteScript(t, filepath.Join(binDir, "opencode"), `#!/bin/sh
+prompt=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --format|--model)
+      shift; shift; continue
+      ;;
+    *)
+      prompt="$1"
+      ;;
+  esac
+  shift
+done
+case "$prompt" in
+  *"pre-archive mode"*)
+    echo "final review: no issues found"
+    ;;
+  *"litespec-review skill"*)
+    echo "no issues found"
+    ;;
+  *)
+    echo "applied changes"
+    ;;
+esac
+`)
+	mustWriteScript(t, filepath.Join(binDir, "git"), `#!/bin/sh
+case "$*" in
+  "rev-parse --verify "*) exit 1 ;;
+  "diff --cached --quiet") exit 1 ;;
+esac
+echo "git $*" >> "$MOCK_GIT_LOG"
+`)
+	mustWriteScript(t, filepath.Join(binDir, "gh"), `#!/bin/sh
+exit 0
+`)
+
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("MOCK_GIT_LOG", gitLog)
+
+	traceDir := filepath.Join(repoRoot, "traces-tui")
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	stdinReader, stdinWriter := io.Pipe()
+	defer stdinReader.Close()
+	defer stdinWriter.Close()
+
+	var once sync.Once
+	writeQuit := func() {
+		once.Do(func() {
+			_, _ = stdinWriter.Write([]byte("q"))
+			_ = stdinWriter.Close()
+		})
+	}
+
+	go func() {
+		defer writeQuit()
+		for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			matches, err := filepath.Glob(filepath.Join(traceDir, "*.jsonl"))
+			if err != nil || len(matches) == 0 {
+				continue
+			}
+			if traceHasEventTypes(t, matches[0], []string{"run_meta", "state_change", "run_end"}) {
+				return
+			}
+		}
+	}()
+
+	code := runCLI(context.Background(), []string{"--trace-dir", traceDir, changeDir}, repoRoot, stdinReader, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("runCLI() code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
+	}
+
+	assertSingleTraceFileContains(t, traceDir, []string{"run_meta", "state_change", "run_end"})
+}
+
 func TestRunCLIPiModeUsesNelsonContext(t *testing.T) {
 	oldNewController := newController
 	newController = func(cfg config.Config, opts ...controller.Option) (controller.Controller, error) {
@@ -467,6 +588,44 @@ func mustReadFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+func assertSingleTraceFileContains(t *testing.T, dir string, wantTypes []string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if err != nil {
+		t.Fatalf("glob trace files: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 trace file in %s, got %d (%v)", dir, len(matches), matches)
+	}
+	if !traceHasEventTypes(t, matches[0], wantTypes) {
+		data := mustReadFile(t, matches[0])
+		t.Fatalf("trace %s missing one of %v in %s", matches[0], wantTypes, data)
+	}
+}
+
+func traceHasEventTypes(t *testing.T, path string, wantTypes []string) bool {
+	t.Helper()
+	data := mustReadFile(t, path)
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("invalid trace JSON in %s: %v\n%s", path, err, line)
+		}
+		typeValue, _ := event["type"].(string)
+		seen[typeValue] = true
+	}
+	for _, want := range wantTypes {
+		if !seen[want] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestToTeaMsgBridgesAllEventTypes(t *testing.T) {

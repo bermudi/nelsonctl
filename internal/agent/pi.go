@@ -19,6 +19,7 @@ type piRPCAgent struct {
 	lookupPath      func(string) (string, error)
 	client          rpcTransport
 	events          chan Event
+	sessionEvents   chan Event
 	implSessionID   string
 	implSessionPath string
 	mu              sync.Mutex
@@ -41,6 +42,7 @@ func NewPiRPC(opts ...Option) Agent {
 		settings:        settings,
 		lookupPath:      nil,
 		events:          make(chan Event, settings.eventBufferSize()),
+		sessionEvents:   make(chan Event, settings.eventBufferSize()),
 		lastSessionByID: map[string]string{},
 	}
 	agent.newClient = agent.defaultNewClient
@@ -216,6 +218,7 @@ func (a *piRPCAgent) Close() error {
 	if client != nil {
 		_ = client.Close()
 	}
+	close(a.sessionEvents)
 	close(a.events)
 	return nil
 }
@@ -300,7 +303,7 @@ func (a *piRPCAgent) consumeSessionEvents(sessionID string, stdout *strings.Buil
 drain:
 	for {
 		select {
-		case <-a.events:
+		case <-a.sessionEvents:
 			drained++
 		default:
 			break drain
@@ -314,7 +317,7 @@ drain:
 			select {
 			case <-ctx.Done():
 				return
-			case event, ok := <-a.events:
+			case event, ok := <-a.sessionEvents:
 				if !ok {
 					done <- fmt.Errorf("pi process exited")
 					return
@@ -411,6 +414,10 @@ func (a *piRPCAgent) restartAfterCrash(ctx context.Context, cause error) error {
 func (a *piRPCAgent) emit(event Event) {
 	select {
 	case a.events <- event:
+	default:
+	}
+	select {
+	case a.sessionEvents <- event:
 	default:
 	}
 }
