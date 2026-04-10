@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "poe-provider": {
+      "source": "/home/daniel/build/skills/poe-provider",
+      "sourceType": "local",
+      "computedHash": "cead70cb7e7e7b6e2c026f37bdf0fd0673a2a72584d1bccaa4fe3defc7307c77"
+    }
+  }
+}

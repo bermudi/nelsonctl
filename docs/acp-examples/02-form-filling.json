@@ -1,0 +1,293 @@
+{
+  "_comment": "Form filling: Agent fills a contact form using set_field actions with streaming chat deltas and proper status transitions. Demonstrates set_field actions with different field types, chat delta streaming, and state snapshots in results.",
+  "steps": [
+    {
+      "direction": "server",
+      "description": "Server sends session config",
+      "message": {
+        "type": "config",
+        "sessionId": "acp-example-form-001",
+        "features": {
+          "chat": true
+        },
+        "providers": [
+          {
+            "id": "openai",
+            "name": "OpenAI GPT-4o",
+            "model": "gpt-4o"
+          }
+        ],
+        "current_provider": "openai"
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client sends manifest with a single contact form screen",
+      "message": {
+        "type": "manifest",
+        "app": "contact-portal",
+        "version": "1.0.0",
+        "currentScreen": "contact-form",
+        "screens": {
+          "contact-form": {
+            "id": "contact-form",
+            "label": "Contact Form",
+            "route": "/contact",
+            "fields": [
+              {
+                "id": "name",
+                "type": "text",
+                "label": "Full Name",
+                "required": true,
+                "placeholder": "Enter your full name"
+              },
+              {
+                "id": "email",
+                "type": "email",
+                "label": "Email Address",
+                "required": true,
+                "placeholder": "you@example.com"
+              },
+              {
+                "id": "phone",
+                "type": "phone",
+                "label": "Phone Number",
+                "placeholder": "+1 (555) 000-0000"
+              },
+              {
+                "id": "message",
+                "type": "textarea",
+                "label": "Message",
+                "required": true,
+                "maxLength": 2000,
+                "placeholder": "How can we help you?"
+              }
+            ],
+            "actions": [
+              {
+                "id": "submit",
+                "label": "Submit",
+                "requiresConfirmation": false
+              },
+              {
+                "id": "reset",
+                "label": "Reset Form"
+              }
+            ],
+            "modals": []
+          }
+        },
+        "user": {
+          "name": "Support Agent",
+          "email": "support@example.com",
+          "role": "agent"
+        },
+        "persona": {
+          "name": "FormHelper",
+          "role": "form assistant",
+          "instructions": "You help users fill out forms quickly and accurately."
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server confirms ready state",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends greeting",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "Hi! I can help you fill out the contact form. Just tell me the details.",
+        "final": true
+      }
+    },
+    {
+      "direction": "client",
+      "description": "User asks the agent to fill the form with specific details",
+      "message": {
+        "type": "text",
+        "message": "Fill the form for John Doe, john@example.com, +1-555-0123, and say he wants a product demo"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to thinking while processing the request",
+      "message": {
+        "type": "status",
+        "status": "thinking"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams first chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "I'll",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams second chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " fill",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams third chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " the",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams fourth chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " contact",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams fifth chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " form",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams sixth chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " for you.",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends the final assembled chat message",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "I'll fill the contact form for you.",
+        "final": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to executing before running UI commands",
+      "message": {
+        "type": "status",
+        "status": "executing"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends command to set all four form fields",
+      "message": {
+        "type": "command",
+        "seq": 1,
+        "actions": [
+          {
+            "do": "set_field",
+            "field": "name",
+            "value": "John Doe"
+          },
+          {
+            "do": "set_field",
+            "field": "email",
+            "value": "john@example.com"
+          },
+          {
+            "do": "set_field",
+            "field": "phone",
+            "value": "+1-555-0123"
+          },
+          {
+            "do": "set_field",
+            "field": "message",
+            "value": "Hi, I'm interested in scheduling a product demo. Could you please provide available time slots and any prerequisites I should be aware of? Thank you!"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports all four set_field actions succeeded with a state snapshot",
+      "message": {
+        "type": "result",
+        "seq": 1,
+        "results": [
+          { "index": 0, "success": true },
+          { "index": 1, "success": true },
+          { "index": 2, "success": true },
+          { "index": 3, "success": true }
+        ],
+        "state": {
+          "screen": "contact-form",
+          "fields": {
+            "name": {
+              "value": "John Doe",
+              "valid": true,
+              "dirty": true
+            },
+            "email": {
+              "value": "john@example.com",
+              "valid": true,
+              "dirty": true
+            },
+            "phone": {
+              "value": "+1-555-0123",
+              "valid": true,
+              "dirty": true
+            },
+            "message": {
+              "value": "Hi, I'm interested in scheduling a product demo. Could you please provide available time slots and any prerequisites I should be aware of? Thank you!",
+              "valid": true,
+              "dirty": true
+            }
+          },
+          "canSubmit": true
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server returns to idle after successful execution",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends completion message offering to submit",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "Done! The contact form is filled out for John Doe. Would you like me to submit it?",
+        "final": true
+      }
+    }
+  ]
+}

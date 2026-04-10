@@ -1,0 +1,682 @@
+{
+  "_comment": "Full CRM session: A complete multi-step interaction in a CRM application. The agent creates a contact record (navigates, sets fields, saves) and then creates a deal on a separate screen. Demonstrates the full power of ACP: streaming chat deltas, navigation between screens, set_field actions, click actions, state snapshots, and multi-command sequences.",
+  "steps": [
+    {
+      "direction": "server",
+      "description": "Server sends session config with multiple LLM providers",
+      "message": {
+        "type": "config",
+        "sessionId": "acp-example-crm-001",
+        "features": {
+          "chat": true
+        },
+        "providers": [
+          {
+            "id": "anthropic",
+            "name": "Anthropic Claude",
+            "model": "claude-sonnet-4-5-20250929"
+          },
+          {
+            "id": "openai",
+            "name": "OpenAI GPT-4o",
+            "model": "gpt-4o"
+          }
+        ],
+        "current_provider": "anthropic"
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client sends full CRM manifest with three screens: contacts list, contact detail, and deals",
+      "message": {
+        "type": "manifest",
+        "app": "acme-crm",
+        "version": "4.2.0",
+        "currentScreen": "contacts",
+        "screens": {
+          "contacts": {
+            "id": "contacts",
+            "label": "Contacts",
+            "route": "/crm/contacts",
+            "fields": [
+              {
+                "id": "contactSearch",
+                "type": "text",
+                "label": "Search Contacts",
+                "placeholder": "Name, email, or company..."
+              },
+              {
+                "id": "statusFilter",
+                "type": "select",
+                "label": "Status",
+                "options": [
+                  { "value": "all", "label": "All" },
+                  { "value": "lead", "label": "Lead" },
+                  { "value": "prospect", "label": "Prospect" },
+                  { "value": "customer", "label": "Customer" },
+                  { "value": "churned", "label": "Churned" }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "id": "newContact",
+                "label": "New Contact"
+              },
+              {
+                "id": "importContacts",
+                "label": "Import CSV"
+              }
+            ],
+            "modals": []
+          },
+          "contact-detail": {
+            "id": "contact-detail",
+            "label": "Contact Detail",
+            "route": "/crm/contacts/:id",
+            "fields": [
+              {
+                "id": "firstName",
+                "type": "text",
+                "label": "First Name",
+                "required": true
+              },
+              {
+                "id": "lastName",
+                "type": "text",
+                "label": "Last Name",
+                "required": true
+              },
+              {
+                "id": "email",
+                "type": "email",
+                "label": "Email",
+                "required": true
+              },
+              {
+                "id": "company",
+                "type": "text",
+                "label": "Company"
+              },
+              {
+                "id": "phone",
+                "type": "phone",
+                "label": "Phone"
+              },
+              {
+                "id": "notes",
+                "type": "textarea",
+                "label": "Notes",
+                "maxLength": 5000
+              },
+              {
+                "id": "status",
+                "type": "select",
+                "label": "Status",
+                "required": true,
+                "options": [
+                  { "value": "lead", "label": "Lead" },
+                  { "value": "prospect", "label": "Prospect" },
+                  { "value": "customer", "label": "Customer" },
+                  { "value": "churned", "label": "Churned" }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "id": "saveContact",
+                "label": "Save Contact"
+              },
+              {
+                "id": "deleteContact",
+                "label": "Delete Contact",
+                "destructive": true,
+                "requiresConfirmation": true
+              }
+            ],
+            "modals": []
+          },
+          "deals": {
+            "id": "deals",
+            "label": "Deals",
+            "route": "/crm/deals",
+            "fields": [
+              {
+                "id": "dealName",
+                "type": "text",
+                "label": "Deal Name",
+                "required": true
+              },
+              {
+                "id": "value",
+                "type": "currency",
+                "label": "Value",
+                "required": true,
+                "min": 0.01
+              },
+              {
+                "id": "stage",
+                "type": "select",
+                "label": "Stage",
+                "required": true,
+                "options": [
+                  { "value": "qualification", "label": "Qualification" },
+                  { "value": "proposal", "label": "Proposal" },
+                  { "value": "negotiation", "label": "Negotiation" },
+                  { "value": "closed-won", "label": "Closed Won" },
+                  { "value": "closed-lost", "label": "Closed Lost" }
+                ]
+              },
+              {
+                "id": "contactLink",
+                "type": "autocomplete",
+                "label": "Linked Contact",
+                "source": "api/contacts"
+              },
+              {
+                "id": "closeDate",
+                "type": "date",
+                "label": "Expected Close Date"
+              },
+              {
+                "id": "dealNotes",
+                "type": "textarea",
+                "label": "Notes",
+                "maxLength": 3000
+              }
+            ],
+            "actions": [
+              {
+                "id": "saveDeal",
+                "label": "Save Deal"
+              },
+              {
+                "id": "deleteDeal",
+                "label": "Delete Deal",
+                "destructive": true,
+                "requiresConfirmation": true
+              }
+            ],
+            "modals": []
+          }
+        },
+        "user": {
+          "name": "Emily Park",
+          "email": "emily@acmecorp.com",
+          "org": "Acme Corp",
+          "role": "sales-rep"
+        },
+        "persona": {
+          "name": "SalesBot",
+          "role": "CRM assistant",
+          "instructions": "You help sales representatives manage contacts and deals in the CRM."
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server confirms ready state",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends greeting from the agent persona",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "Hi Emily! I'm here to help you manage your contacts and deals. What would you like to do?",
+        "final": true
+      }
+    },
+    {
+      "direction": "client",
+      "description": "User requests creating a contact and a deal in one message",
+      "message": {
+        "type": "text",
+        "message": "Create a new contact for Sarah Chen from Acme Corp, she's a prospect, and create a deal for $50,000 in the proposal stage"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to thinking while the LLM processes the multi-step request",
+      "message": {
+        "type": "status",
+        "status": "thinking"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams first chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "I'll",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams second chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " create",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams third chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " the contact",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams fourth chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " for Sarah Chen",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams fifth chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " and then",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams sixth chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " set up",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server streams seventh chat delta",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": " the deal.",
+        "delta": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends the final assembled chat message",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "I'll create the contact for Sarah Chen and then set up the deal.",
+        "final": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to executing before running UI commands",
+      "message": {
+        "type": "status",
+        "status": "executing"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Step 1: Navigate to the contact detail screen",
+      "message": {
+        "type": "command",
+        "seq": 1,
+        "actions": [
+          {
+            "do": "navigate",
+            "screen": "contact-detail"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client confirms navigation to contact-detail succeeded",
+      "message": {
+        "type": "result",
+        "seq": 1,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Step 2: Set all contact fields",
+      "message": {
+        "type": "command",
+        "seq": 2,
+        "actions": [
+          {
+            "do": "set_field",
+            "field": "firstName",
+            "value": "Sarah"
+          },
+          {
+            "do": "set_field",
+            "field": "lastName",
+            "value": "Chen"
+          },
+          {
+            "do": "set_field",
+            "field": "email",
+            "value": "sarah.chen@acme.com"
+          },
+          {
+            "do": "set_field",
+            "field": "company",
+            "value": "Acme Corp"
+          },
+          {
+            "do": "set_field",
+            "field": "status",
+            "value": "prospect"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports all five set_field actions succeeded with state snapshot",
+      "message": {
+        "type": "result",
+        "seq": 2,
+        "results": [
+          { "index": 0, "success": true },
+          { "index": 1, "success": true },
+          { "index": 2, "success": true },
+          { "index": 3, "success": true },
+          { "index": 4, "success": true }
+        ],
+        "state": {
+          "screen": "contact-detail",
+          "fields": {
+            "firstName": {
+              "value": "Sarah",
+              "valid": true,
+              "dirty": true
+            },
+            "lastName": {
+              "value": "Chen",
+              "valid": true,
+              "dirty": true
+            },
+            "email": {
+              "value": "sarah.chen@acme.com",
+              "valid": true,
+              "dirty": true
+            },
+            "company": {
+              "value": "Acme Corp",
+              "valid": true,
+              "dirty": true
+            },
+            "phone": {
+              "value": "",
+              "valid": true,
+              "dirty": false
+            },
+            "notes": {
+              "value": "",
+              "valid": true,
+              "dirty": false
+            },
+            "status": {
+              "value": "prospect",
+              "valid": true,
+              "dirty": true
+            }
+          },
+          "canSubmit": true
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Step 3: Click save to persist the contact",
+      "message": {
+        "type": "command",
+        "seq": 3,
+        "actions": [
+          {
+            "do": "click",
+            "action": "saveContact"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports save action succeeded",
+      "message": {
+        "type": "result",
+        "seq": 3,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server shows a success toast for the contact creation",
+      "message": {
+        "type": "command",
+        "seq": 4,
+        "actions": [
+          {
+            "do": "show_toast",
+            "message": "Contact Sarah Chen saved successfully.",
+            "level": "success",
+            "duration": 3000
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports toast shown",
+      "message": {
+        "type": "result",
+        "seq": 4,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Step 4: Navigate to the deals screen",
+      "message": {
+        "type": "command",
+        "seq": 5,
+        "actions": [
+          {
+            "do": "navigate",
+            "screen": "deals"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client confirms navigation to deals succeeded",
+      "message": {
+        "type": "result",
+        "seq": 5,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Step 5: Set all deal fields",
+      "message": {
+        "type": "command",
+        "seq": 6,
+        "actions": [
+          {
+            "do": "set_field",
+            "field": "dealName",
+            "value": "Acme Corp - Enterprise License"
+          },
+          {
+            "do": "set_field",
+            "field": "value",
+            "value": 50000
+          },
+          {
+            "do": "set_field",
+            "field": "stage",
+            "value": "proposal"
+          },
+          {
+            "do": "set_field",
+            "field": "contactLink",
+            "value": "Sarah Chen"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports all deal fields filled with state snapshot",
+      "message": {
+        "type": "result",
+        "seq": 6,
+        "results": [
+          { "index": 0, "success": true },
+          { "index": 1, "success": true },
+          { "index": 2, "success": true },
+          { "index": 3, "success": true }
+        ],
+        "state": {
+          "screen": "deals",
+          "fields": {
+            "dealName": {
+              "value": "Acme Corp - Enterprise License",
+              "valid": true,
+              "dirty": true
+            },
+            "value": {
+              "value": 50000,
+              "valid": true,
+              "dirty": true
+            },
+            "stage": {
+              "value": "proposal",
+              "valid": true,
+              "dirty": true
+            },
+            "contactLink": {
+              "value": "Sarah Chen",
+              "valid": true,
+              "dirty": true
+            },
+            "closeDate": {
+              "value": "",
+              "valid": true,
+              "dirty": false
+            },
+            "dealNotes": {
+              "value": "",
+              "valid": true,
+              "dirty": false
+            }
+          },
+          "canSubmit": true
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Step 6: Click save to persist the deal",
+      "message": {
+        "type": "command",
+        "seq": 7,
+        "actions": [
+          {
+            "do": "click",
+            "action": "saveDeal"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports save action succeeded",
+      "message": {
+        "type": "result",
+        "seq": 7,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server shows a success toast for the deal creation",
+      "message": {
+        "type": "command",
+        "seq": 8,
+        "actions": [
+          {
+            "do": "show_toast",
+            "message": "Deal 'Acme Corp - Enterprise License' created for $50,000.",
+            "level": "success",
+            "duration": 4000
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports toast shown",
+      "message": {
+        "type": "result",
+        "seq": 8,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server returns to idle after completing both operations",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends final summary message",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "All done! I've created the contact for Sarah Chen (Acme Corp, prospect) and a $50,000 deal in the proposal stage linked to her. Is there anything else you'd like to do?",
+        "final": true
+      }
+    }
+  ]
+}

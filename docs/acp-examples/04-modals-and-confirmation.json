@@ -1,0 +1,363 @@
+{
+  "_comment": "Modals and confirmation: Agent opens a modal to add a user, fills fields inside it, then asks for confirmation before a destructive action. The user declines the destructive action, demonstrating the ask_confirm / confirm flow with confirmed=false.",
+  "steps": [
+    {
+      "direction": "server",
+      "description": "Server sends session config",
+      "message": {
+        "type": "config",
+        "sessionId": "acp-example-modal-001",
+        "features": {
+          "chat": true
+        },
+        "providers": [
+          {
+            "id": "anthropic",
+            "name": "Anthropic Claude",
+            "model": "claude-sonnet-4-5-20250929"
+          }
+        ],
+        "current_provider": "anthropic"
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client sends manifest with a user management screen, a modal for adding users, and a destructive delete action",
+      "message": {
+        "type": "manifest",
+        "app": "admin-panel",
+        "version": "1.4.0",
+        "currentScreen": "user-management",
+        "screens": {
+          "user-management": {
+            "id": "user-management",
+            "label": "User Management",
+            "route": "/admin/users",
+            "fields": [
+              {
+                "id": "userSearch",
+                "type": "text",
+                "label": "Search Users",
+                "placeholder": "Name or email..."
+              },
+              {
+                "id": "roleFilter",
+                "type": "select",
+                "label": "Filter by Role",
+                "options": [
+                  { "value": "all", "label": "All Roles" },
+                  { "value": "admin", "label": "Admin" },
+                  { "value": "editor", "label": "Editor" },
+                  { "value": "viewer", "label": "Viewer" }
+                ]
+              },
+              {
+                "id": "statusFilter",
+                "type": "select",
+                "label": "Filter by Status",
+                "options": [
+                  { "value": "all", "label": "All" },
+                  { "value": "active", "label": "Active" },
+                  { "value": "inactive", "label": "Inactive" }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "id": "addUser",
+                "label": "Add User"
+              },
+              {
+                "id": "deleteInactive",
+                "label": "Delete Inactive Users",
+                "destructive": true,
+                "requiresConfirmation": true
+              }
+            ],
+            "modals": [
+              {
+                "id": "add-user",
+                "label": "Add New User",
+                "searchable": false
+              }
+            ]
+          }
+        },
+        "user": {
+          "name": "Carol Williams",
+          "email": "carol@example.com",
+          "org": "Example Corp",
+          "role": "admin"
+        },
+        "persona": {
+          "name": "AdminBot",
+          "role": "administration assistant",
+          "instructions": "You help administrators manage users and system settings."
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server confirms ready state",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends greeting",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "Hello Carol! I can help you manage users. What would you like to do?",
+        "final": true
+      }
+    },
+    {
+      "direction": "client",
+      "description": "User asks to add a new user",
+      "message": {
+        "type": "text",
+        "message": "Add a new user named David Kim as an editor"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to thinking",
+      "message": {
+        "type": "status",
+        "status": "thinking"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server acknowledges and explains what it will do",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "I'll open the add user dialog and fill in the details for David Kim.",
+        "final": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to executing",
+      "message": {
+        "type": "status",
+        "status": "executing"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server opens the add-user modal",
+      "message": {
+        "type": "command",
+        "seq": 1,
+        "actions": [
+          {
+            "do": "open_modal",
+            "modal": "add-user"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports modal opened successfully",
+      "message": {
+        "type": "result",
+        "seq": 1,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server shows a toast confirming the modal is open",
+      "message": {
+        "type": "command",
+        "seq": 2,
+        "actions": [
+          {
+            "do": "show_toast",
+            "message": "Fill in the new user details below.",
+            "level": "info",
+            "duration": 3000
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports toast shown",
+      "message": {
+        "type": "result",
+        "seq": 2,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server clicks the addUser action to save the new user",
+      "message": {
+        "type": "command",
+        "seq": 3,
+        "actions": [
+          {
+            "do": "click",
+            "action": "addUser"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports the addUser action succeeded",
+      "message": {
+        "type": "result",
+        "seq": 3,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server closes the modal after saving",
+      "message": {
+        "type": "command",
+        "seq": 4,
+        "actions": [
+          {
+            "do": "close_modal"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports modal closed",
+      "message": {
+        "type": "result",
+        "seq": 4,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server shows success toast",
+      "message": {
+        "type": "command",
+        "seq": 5,
+        "actions": [
+          {
+            "do": "show_toast",
+            "message": "User David Kim has been created as an editor.",
+            "level": "success",
+            "duration": 4000
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client reports toast shown",
+      "message": {
+        "type": "result",
+        "seq": 5,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server returns to idle and confirms, then offers a follow-up",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server confirms creation and proactively asks about cleanup",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "User created! David Kim now has editor access. Would you also like me to remove the inactive users?",
+        "final": true
+      }
+    },
+    {
+      "direction": "client",
+      "description": "User agrees to proceed with the cleanup",
+      "message": {
+        "type": "text",
+        "message": "Yes, clean up the inactive users"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to thinking",
+      "message": {
+        "type": "status",
+        "status": "thinking"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to executing for the destructive action",
+      "message": {
+        "type": "status",
+        "status": "executing"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server asks for explicit confirmation before the destructive action",
+      "message": {
+        "type": "command",
+        "seq": 6,
+        "actions": [
+          {
+            "do": "ask_confirm",
+            "message": "This will permanently delete 3 inactive user accounts. This action cannot be undone. Continue?"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "User declines the destructive action",
+      "message": {
+        "type": "confirm",
+        "seq": 6,
+        "confirmed": false
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server returns to idle",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server gracefully acknowledges the cancellation",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "Got it, I won't delete any users. The inactive accounts will remain as they are. Let me know if you need anything else!",
+        "final": true
+      }
+    }
+  ]
+}

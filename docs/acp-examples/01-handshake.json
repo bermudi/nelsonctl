@@ -1,0 +1,160 @@
+{
+  "_comment": "Basic handshake: Connect to a task management app. The server sends session config, the client responds with a manifest describing two screens (dashboard and task-detail), then the server confirms idle status and sends a greeting.",
+  "steps": [
+    {
+      "direction": "server",
+      "description": "Server sends session config with features, providers, and current provider",
+      "message": {
+        "type": "config",
+        "sessionId": "acp-example-handshake-001",
+        "features": {
+          "chat": true
+        },
+        "providers": [
+          {
+            "id": "anthropic",
+            "name": "Anthropic Claude",
+            "model": "claude-sonnet-4-5-20250929"
+          },
+          {
+            "id": "openai",
+            "name": "OpenAI GPT-4o",
+            "model": "gpt-4o"
+          }
+        ],
+        "current_provider": "anthropic"
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client sends the app manifest with two screens: dashboard and task-detail",
+      "message": {
+        "type": "manifest",
+        "app": "taskapp",
+        "version": "2.1.0",
+        "currentScreen": "dashboard",
+        "screens": {
+          "dashboard": {
+            "id": "dashboard",
+            "label": "Dashboard",
+            "route": "/dashboard",
+            "fields": [
+              {
+                "id": "search",
+                "type": "text",
+                "label": "Search Tasks",
+                "placeholder": "Search by title or assignee..."
+              },
+              {
+                "id": "filterStatus",
+                "type": "select",
+                "label": "Filter by Status",
+                "options": [
+                  { "value": "all", "label": "All" },
+                  { "value": "todo", "label": "To Do" },
+                  { "value": "in-progress", "label": "In Progress" },
+                  { "value": "done", "label": "Done" }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "id": "newTask",
+                "label": "New Task"
+              },
+              {
+                "id": "refresh",
+                "label": "Refresh"
+              }
+            ],
+            "modals": []
+          },
+          "task-detail": {
+            "id": "task-detail",
+            "label": "Task Detail",
+            "route": "/tasks/:id",
+            "fields": [
+              {
+                "id": "title",
+                "type": "text",
+                "label": "Title",
+                "required": true
+              },
+              {
+                "id": "description",
+                "type": "textarea",
+                "label": "Description",
+                "maxLength": 5000
+              },
+              {
+                "id": "status",
+                "type": "select",
+                "label": "Status",
+                "required": true,
+                "options": [
+                  { "value": "todo", "label": "To Do" },
+                  { "value": "in-progress", "label": "In Progress" },
+                  { "value": "review", "label": "In Review" },
+                  { "value": "done", "label": "Done" }
+                ]
+              },
+              {
+                "id": "priority",
+                "type": "select",
+                "label": "Priority",
+                "options": [
+                  { "value": "low", "label": "Low" },
+                  { "value": "medium", "label": "Medium" },
+                  { "value": "high", "label": "High" },
+                  { "value": "urgent", "label": "Urgent" }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "id": "saveTask",
+                "label": "Save"
+              },
+              {
+                "id": "deleteTask",
+                "label": "Delete Task",
+                "destructive": true,
+                "requiresConfirmation": true
+              }
+            ],
+            "modals": []
+          }
+        },
+        "user": {
+          "name": "Alice Johnson",
+          "email": "alice@example.com",
+          "org": "Acme Inc",
+          "role": "project-manager"
+        },
+        "persona": {
+          "name": "TaskBot",
+          "role": "task management assistant",
+          "instructions": "You help users manage their tasks and projects efficiently."
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server confirms ready state",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends a greeting chat message from the agent persona",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "Hello Alice! I can help you manage your tasks. You can ask me to create tasks, update their status, or navigate between screens.",
+        "final": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,272 @@
+{
+  "_comment": "Navigation: Agent navigates an e-commerce admin panel between screens. Demonstrates navigate action and screen transitions.",
+  "steps": [
+    {
+      "direction": "server",
+      "description": "Server sends session config",
+      "message": {
+        "type": "config",
+        "sessionId": "acp-example-nav-001",
+        "features": {
+          "chat": true
+        },
+        "providers": [
+          {
+            "id": "anthropic",
+            "name": "Anthropic Claude",
+            "model": "claude-sonnet-4-5-20250929"
+          }
+        ],
+        "current_provider": "anthropic"
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client sends manifest with three e-commerce admin screens",
+      "message": {
+        "type": "manifest",
+        "app": "shopadmin",
+        "version": "3.0.0",
+        "currentScreen": "orders",
+        "screens": {
+          "orders": {
+            "id": "orders",
+            "label": "Orders",
+            "route": "/admin/orders",
+            "fields": [
+              {
+                "id": "orderSearch",
+                "type": "text",
+                "label": "Search Orders",
+                "placeholder": "Order ID or customer name..."
+              },
+              {
+                "id": "orderStatus",
+                "type": "select",
+                "label": "Status Filter",
+                "options": [
+                  { "value": "all", "label": "All Orders" },
+                  { "value": "pending", "label": "Pending" },
+                  { "value": "shipped", "label": "Shipped" },
+                  { "value": "delivered", "label": "Delivered" },
+                  { "value": "cancelled", "label": "Cancelled" }
+                ]
+              }
+            ],
+            "actions": [
+              {
+                "id": "exportOrders",
+                "label": "Export to CSV"
+              }
+            ],
+            "modals": []
+          },
+          "products": {
+            "id": "products",
+            "label": "Products",
+            "route": "/admin/products",
+            "fields": [
+              {
+                "id": "productName",
+                "type": "text",
+                "label": "Product Name",
+                "required": true
+              },
+              {
+                "id": "sku",
+                "type": "text",
+                "label": "SKU",
+                "required": true
+              },
+              {
+                "id": "price",
+                "type": "currency",
+                "label": "Price",
+                "required": true,
+                "min": 0.01
+              },
+              {
+                "id": "stock",
+                "type": "number",
+                "label": "Stock Quantity",
+                "min": 0
+              },
+              {
+                "id": "category",
+                "type": "select",
+                "label": "Category",
+                "options": [
+                  { "value": "electronics", "label": "Electronics" },
+                  { "value": "clothing", "label": "Clothing" },
+                  { "value": "home", "label": "Home & Garden" },
+                  { "value": "books", "label": "Books" }
+                ]
+              },
+              {
+                "id": "description",
+                "type": "textarea",
+                "label": "Description",
+                "maxLength": 3000
+              }
+            ],
+            "actions": [
+              {
+                "id": "saveProduct",
+                "label": "Save Product"
+              },
+              {
+                "id": "deleteProduct",
+                "label": "Delete Product",
+                "destructive": true,
+                "requiresConfirmation": true
+              }
+            ],
+            "modals": []
+          },
+          "settings": {
+            "id": "settings",
+            "label": "Settings",
+            "route": "/admin/settings",
+            "fields": [
+              {
+                "id": "storeName",
+                "type": "text",
+                "label": "Store Name"
+              },
+              {
+                "id": "currency",
+                "type": "select",
+                "label": "Default Currency",
+                "options": [
+                  { "value": "USD", "label": "US Dollar (USD)" },
+                  { "value": "EUR", "label": "Euro (EUR)" },
+                  { "value": "GBP", "label": "British Pound (GBP)" }
+                ]
+              },
+              {
+                "id": "taxRate",
+                "type": "number",
+                "label": "Tax Rate (%)",
+                "min": 0,
+                "max": 100
+              }
+            ],
+            "actions": [
+              {
+                "id": "saveSettings",
+                "label": "Save Settings"
+              }
+            ],
+            "modals": []
+          }
+        },
+        "user": {
+          "name": "Bob Martinez",
+          "email": "bob@shopexample.com",
+          "org": "ShopExample",
+          "role": "admin"
+        },
+        "persona": {
+          "name": "ShopAssist",
+          "role": "e-commerce assistant",
+          "instructions": "You help store administrators manage their online shop."
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server confirms ready state",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends greeting",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "Welcome back, Bob! I can help you manage orders, products, and store settings. What would you like to do?",
+        "final": true
+      }
+    },
+    {
+      "direction": "client",
+      "description": "User asks to navigate to products page",
+      "message": {
+        "type": "text",
+        "message": "Show me the products page"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to thinking",
+      "message": {
+        "type": "status",
+        "status": "thinking"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server sends acknowledgement",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "I'll take you to the products page.",
+        "final": true
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server transitions to executing",
+      "message": {
+        "type": "status",
+        "status": "executing"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server navigates to the products screen",
+      "message": {
+        "type": "command",
+        "seq": 1,
+        "actions": [
+          {
+            "do": "navigate",
+            "screen": "products"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "client",
+      "description": "Client confirms navigation succeeded",
+      "message": {
+        "type": "result",
+        "seq": 1,
+        "results": [
+          { "index": 0, "success": true }
+        ]
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server returns to idle",
+      "message": {
+        "type": "status",
+        "status": "idle"
+      }
+    },
+    {
+      "direction": "server",
+      "description": "Server confirms what was done",
+      "message": {
+        "type": "chat",
+        "from": "agent",
+        "message": "You're now on the products page. What would you like to do?",
+        "final": true
+      }
+    }
+  ]
+}
