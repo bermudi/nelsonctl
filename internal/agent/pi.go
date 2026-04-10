@@ -384,7 +384,19 @@ func (a *piRPCAgent) forwardEvents(client rpcTransport) {
 				sessionID = a.activeSessionID
 				a.mu.Unlock()
 			}
-			a.emit(Event{TracePayload: RPCRawEvent{RPCType: event.Type, StopReason: stopReasonFromRPCEvent(event), SessionID: sessionID}})
+			stopReason := stopReasonFromRPCEvent(event)
+			a.emit(Event{TracePayload: RPCRawEvent{RPCType: event.Type, StopReason: stopReason, SessionID: sessionID}})
+			// Pi fires agent_end at the end of every conversation turn.
+			// When stopReason is "toolUse", the agent is pausing to execute
+			// tool calls — it will continue automatically. Only treat the
+			// agent as truly done when the stop reason is something else
+			// (e.g. "endTurn" or empty).
+			if stopReason == "toolUse" {
+				if os.Getenv("NELSONCTL_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "[DEBUG-agent] agent_end with toolUse — ignoring (agent will continue)\n")
+				}
+				continue
+			}
 			a.emit(Event{Type: CompletionEvent, Content: "agent_end", Metadata: map[string]string{"session_id": sessionID}})
 		case "extension_error":
 			a.emit(Event{Type: ErrorEvent, Content: event.Error})
@@ -441,10 +453,17 @@ func stopReasonFromRPCEvent(event rpcEvent) string {
 	if stopReason, ok := extractStopReason(event.MessageData); ok {
 		return stopReason
 	}
+	// agent_end contains ALL conversation messages. Earlier assistant turns
+	// may have stopReason "toolUse", but the LAST message's stopReason is the
+	// one that matters — it tells us why the agent finally stopped.
+	var last string
 	for _, message := range event.Messages {
-		if stopReason, ok := extractStopReason(message); ok {
-			return stopReason
+		if sr, ok := extractStopReason(message); ok {
+			last = sr
 		}
+	}
+	if last != "" {
+		return last
 	}
 	return ""
 }
