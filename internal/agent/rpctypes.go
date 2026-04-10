@@ -1,5 +1,7 @@
 package agent
 
+import "encoding/json"
+
 type rpcCommand struct {
 	ID            string                 `json:"id,omitempty"`
 	Type          string                 `json:"type"`
@@ -54,17 +56,30 @@ type rpcEvent struct {
 	ExtensionPath   string                    `json:"extensionPath,omitempty"`
 	Error           string                    `json:"error,omitempty"`
 	Event           string                    `json:"event,omitempty"`
+	ToolCallID      string                    `json:"toolCallId,omitempty"`
+	ToolName        string                    `json:"toolName,omitempty"`
+	Args            map[string]any            `json:"args,omitempty"`
+	PartialResult   map[string]any            `json:"partialResult,omitempty"`
+	Result          map[string]any            `json:"result,omitempty"`
+	IsError         bool                      `json:"isError,omitempty"`
+	DroppedCount    int                       `json:"-"`
+	DroppedStream   string                    `json:"-"`
+	DroppedReason   string                    `json:"-"`
+	Raw             json.RawMessage           `json:"-"`
 	AssistantUpdate *rpcAssistantMessageEvent `json:"assistantMessageEvent,omitempty"`
 	MessageData     map[string]any            `json:"message,omitempty"`
 	Messages        []map[string]any          `json:"messages,omitempty"`
 }
 
 type rpcAssistantMessageEvent struct {
-	Type string `json:"type,omitempty"`
+	Type  string `json:"type,omitempty"`
 	Delta string `json:"delta,omitempty"`
-	Part struct {
+	Part  struct {
 		Text string `json:"text,omitempty"`
 	} `json:"part,omitempty"`
+	Content  string         `json:"content,omitempty"`
+	Reason   string         `json:"reason,omitempty"`
+	ToolCall map[string]any `json:"toolCall,omitempty"`
 }
 
 type rpcExtensionUIResponse struct {

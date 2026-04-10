@@ -107,7 +107,7 @@ func TestErrorIsolation(t *testing.T) {
 	tw.Close(RunEndEvent{Status: "error", DurationMs: 100, PhasesCompleted: 0, PhasesFailed: 1})
 }
 
-func TestChannelOverflow(t *testing.T) {
+func TestNoTraceDropUnderLoad(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "trace.jsonl")
 
@@ -123,7 +123,8 @@ func TestChannelOverflow(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	for i := 0; i < channelCap+500; i++ {
+	total := 5000
+	for i := 0; i < total; i++ {
 		tw.Send(pipeline.StateEvent{State: pipeline.StateInit})
 	}
 
@@ -142,8 +143,8 @@ func TestChannelOverflow(t *testing.T) {
 		}
 	}
 
-	if count != channelCap+2 {
-		t.Logf("expected %d lines (cap + meta + end), got %d", channelCap+2, count)
+	if count != total+2 {
+		t.Fatalf("expected %d lines (events + meta + end), got %d", total+2, count)
 	}
 }
 

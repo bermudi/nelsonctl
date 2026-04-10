@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -51,9 +52,14 @@ type ModelSetEvent struct {
 }
 
 type RPCRawEvent struct {
-	RPCType    string `json:"rpc_type"`
-	StopReason string `json:"stop_reason,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
+	RPCType        string          `json:"rpc_type"`
+	SessionID      string          `json:"session_id,omitempty"`
+	StopReason     string          `json:"stop_reason,omitempty"`
+	PayloadSummary string          `json:"payload_summary,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	DroppedCount   int             `json:"dropped_count,omitempty"`
+	DroppedStream  string          `json:"dropped_stream,omitempty"`
+	DroppedReason  string          `json:"dropped_reason,omitempty"`
 }
 
 type EventsDrainedEvent struct {
@@ -62,6 +68,36 @@ type EventsDrainedEvent struct {
 
 type AgentRestartedEvent struct {
 	Cause string `json:"cause"`
+}
+
+type CommandStartEvent struct {
+	Name            string   `json:"name"`
+	Command         string   `json:"command,omitempty"`
+	Args            []string `json:"args,omitempty"`
+	WorkDir         string   `json:"work_dir,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	SessionID       string   `json:"session_id,omitempty"`
+	Step            string   `json:"step,omitempty"`
+	ToolCallID      string   `json:"tool_call_id,omitempty"`
+	ToolName        string   `json:"tool_name,omitempty"`
+	ProviderSummary string   `json:"provider_summary,omitempty"`
+}
+
+type CommandResultEvent struct {
+	Name        string   `json:"name"`
+	Command     string   `json:"command,omitempty"`
+	ExitCode    int      `json:"exit_code"`
+	DurationMs  int64    `json:"duration_ms"`
+	StdoutLen   int      `json:"stdout_len,omitempty"`
+	StderrLen   int      `json:"stderr_len,omitempty"`
+	Error       string   `json:"error,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	SessionID   string   `json:"session_id,omitempty"`
+	Step        string   `json:"step,omitempty"`
+	ToolCallID  string   `json:"tool_call_id,omitempty"`
+	ToolName    string   `json:"tool_name,omitempty"`
+	CommandName string   `json:"command_name,omitempty"`
+	CommandArgs []string `json:"command_args,omitempty"`
 }
 
 type Result struct {

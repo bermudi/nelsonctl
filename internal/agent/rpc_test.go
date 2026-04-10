@@ -218,12 +218,9 @@ func TestPiRPCAgentForwardEventsEmitsRPCRawTracePayload(t *testing.T) {
 		t.Fatalf("rpc event = %+v", rpcEvent)
 	}
 
-	completionEvent := expectEventWhere(t, agent.Events(), func(event Event) bool {
+	assertNoMatchingEvent(t, agent.Events(), 100*time.Millisecond, func(event Event) bool {
 		return event.Type == CompletionEvent && event.Metadata["session_id"] == "impl-1"
 	})
-	if completionEvent.Type != CompletionEvent || completionEvent.Metadata["session_id"] != "impl-1" {
-		t.Fatalf("completion event = %+v", completionEvent)
-	}
 }
 
 func TestPiRPCAgentRestartsAfterCrash(t *testing.T) {
@@ -329,6 +326,24 @@ func expectTracePayloadWhere[T any](t *testing.T, events <-chan Event, match fun
 			var zero T
 			t.Fatal("expected matching trace payload")
 			return zero
+		}
+	}
+}
+
+func assertNoMatchingEvent(t *testing.T, events <-chan Event, wait time.Duration, match func(Event) bool) {
+	t.Helper()
+	deadline := time.After(wait)
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if match(event) {
+				t.Fatalf("unexpected matching agent event: %+v", event)
+			}
+		case <-deadline:
+			return
 		}
 	}
 }

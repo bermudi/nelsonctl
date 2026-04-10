@@ -35,7 +35,7 @@ type rpcClient struct {
 	stdout         io.ReadCloser
 	stderr         io.ReadCloser
 	responses      map[string]chan rpcResponse
-	events         chan rpcEvent
+	events         *queuedChannel[rpcEvent]
 	closed         chan struct{}
 	requestCounter uint64
 	mu             sync.Mutex
@@ -51,7 +51,7 @@ func newRPCClient(workDir string, env []string) *rpcClient {
 		env:         env,
 		starter:     startPiRPCProcess,
 		responses:   map[string]chan rpcResponse{},
-		events:      make(chan rpcEvent, 256),
+		events:      newQueuedChannel[rpcEvent](256),
 		closed:      make(chan struct{}),
 		termination: time.Second,
 	}
@@ -133,12 +133,12 @@ func (c *rpcClient) Close() error {
 		_ = signalProcessGroup(cmd, syscall.SIGKILL)
 	}
 	c.readersWG.Wait()
-	close(c.events)
+	c.events.Close()
 	return nil
 }
 
 func (c *rpcClient) Events() <-chan rpcEvent {
-	return c.events
+	return c.events.Channel()
 }
 
 func (c *rpcClient) Send(ctx context.Context, command rpcCommand) (rpcResponse, error) {
@@ -235,10 +235,8 @@ func (c *rpcClient) readStdout() {
 		if err := json.Unmarshal(line, &event); err != nil {
 			continue
 		}
-		select {
-		case c.events <- event:
-		default:
-		}
+		event.Raw = append(event.Raw[:0], line...)
+		c.events.Send(event)
 	}
 }
 

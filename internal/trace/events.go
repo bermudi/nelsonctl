@@ -1,6 +1,9 @@
 package trace
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type RunMetaEvent struct {
 	Type      string `json:"type"`
@@ -75,11 +78,13 @@ type ModelSetTraceEvent struct {
 }
 
 type RPCRawTraceEvent struct {
-	Type       string `json:"type"`
-	RPCType    string `json:"rpc_type"`
-	StopReason string `json:"stop_reason,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	Ts         string `json:"ts"`
+	Type           string          `json:"type"`
+	RPCType        string          `json:"rpc_type"`
+	StopReason     string          `json:"stop_reason,omitempty"`
+	SessionID      string          `json:"session_id,omitempty"`
+	PayloadSummary string          `json:"payload_summary,omitempty"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	Ts             string          `json:"ts"`
 }
 
 type EventsDrainedTraceEvent struct {
@@ -110,6 +115,68 @@ type ControllerActivityEvent struct {
 	Summary   string `json:"summary,omitempty"`
 	Analyzing bool   `json:"analyzing,omitempty"`
 	Ts        string `json:"ts"`
+}
+
+type ControllerToolCallStartEvent struct {
+	Type      string          `json:"type"`
+	ID        string          `json:"id,omitempty"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Ts        string          `json:"ts"`
+}
+
+type ControllerToolCallResultEvent struct {
+	Type           string `json:"type"`
+	ID             string `json:"id,omitempty"`
+	Tool           string `json:"tool"`
+	Approved       bool   `json:"approved,omitempty"`
+	Summary        string `json:"summary,omitempty"`
+	ContentLen     int    `json:"content_len,omitempty"`
+	UserMessageLen int    `json:"user_message_len,omitempty"`
+	Error          string `json:"error,omitempty"`
+	Ts             string `json:"ts"`
+}
+
+type CommandStartTraceEvent struct {
+	Type            string   `json:"type"`
+	Name            string   `json:"name"`
+	Command         string   `json:"command,omitempty"`
+	Args            []string `json:"args,omitempty"`
+	WorkDir         string   `json:"work_dir,omitempty"`
+	Source          string   `json:"source,omitempty"`
+	SessionID       string   `json:"session_id,omitempty"`
+	Step            string   `json:"step,omitempty"`
+	ToolCallID      string   `json:"tool_call_id,omitempty"`
+	ToolName        string   `json:"tool_name,omitempty"`
+	ProviderSummary string   `json:"provider_summary,omitempty"`
+	Ts              string   `json:"ts"`
+}
+
+type CommandResultTraceEvent struct {
+	Type        string   `json:"type"`
+	Name        string   `json:"name"`
+	Command     string   `json:"command,omitempty"`
+	ExitCode    int      `json:"exit_code"`
+	DurationMs  int64    `json:"duration_ms"`
+	StdoutLen   int      `json:"stdout_len,omitempty"`
+	StderrLen   int      `json:"stderr_len,omitempty"`
+	Error       string   `json:"error,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	SessionID   string   `json:"session_id,omitempty"`
+	Step        string   `json:"step,omitempty"`
+	ToolCallID  string   `json:"tool_call_id,omitempty"`
+	ToolName    string   `json:"tool_name,omitempty"`
+	CommandName string   `json:"command_name,omitempty"`
+	CommandArgs []string `json:"command_args,omitempty"`
+	Ts          string   `json:"ts"`
+}
+
+type DroppedEventsTraceEvent struct {
+	Type   string `json:"type"`
+	Stream string `json:"stream"`
+	Count  int    `json:"count"`
+	Reason string `json:"reason,omitempty"`
+	Ts     string `json:"ts"`
 }
 
 type ReviewResultEvent struct {

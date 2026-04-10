@@ -168,8 +168,6 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 		"phase 1: attempts=1 passed=true",
 		"phase 2: attempts=",
 		"final review passed: true",
-		"applied changes",
-		"no issues found",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout missing %q in %q", want, out)
@@ -200,7 +198,8 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 		t.Fatalf("gh log missing pr create: %q", ghLogData)
 	}
 
-	assertSingleTraceFileContains(t, traceDir, []string{"run_meta", "state_change", "run_end"})
+	assertSingleTraceFileContains(t, traceDir, []string{"run_meta", "state_change", "run_end", "controller_tool_call_start", "controller_tool_call_result", "review_result", "agent_invoke", "agent_result"})
+	assertSingleTraceFileContainsText(t, traceDir, []string{"apply", "no issues found", "final review: no issues found"})
 }
 
 func TestRunCLIDryRunSkipsExecution(t *testing.T) {
@@ -216,6 +215,7 @@ func TestRunCLIDryRunSkipsExecution(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
 	configHome := t.TempDir()
+	dataHome := t.TempDir()
 	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
 		"agent: opencode",
 		"steps:",
@@ -249,6 +249,7 @@ exit 99
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("MOCK_AGENT_LOG", filepath.Join(repoRoot, "agent.log"))
 	t.Setenv("MOCK_GIT_LOG", filepath.Join(repoRoot, "git.log"))
@@ -289,6 +290,7 @@ func TestRunCLINoPRSkipsPRCreation(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
 	configHome := t.TempDir()
+	dataHome := t.TempDir()
 	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
 		"agent: opencode",
 		"steps:",
@@ -328,6 +330,7 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("MOCK_GIT_LOG", gitLog)
 	t.Setenv("MOCK_GH_LOG", filepath.Join(repoRoot, "gh.log"))
@@ -358,6 +361,7 @@ func TestRunCLITUIProducesTrace(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
 	configHome := t.TempDir()
+	dataHome := t.TempDir()
 	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
 		"agent: opencode",
 		"steps:",
@@ -420,6 +424,7 @@ exit 0
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("MOCK_GIT_LOG", gitLog)
 
@@ -473,6 +478,7 @@ func TestRunCLIPiModeUsesNelsonContext(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-apply", "SKILL.md"), "apply")
 	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "skills", "litespec-review", "SKILL.md"), "review")
 	configHome := t.TempDir()
+	dataHome := t.TempDir()
 	mustWriteFile(t, filepath.Join(configHome, "nelsonctl", "config.yaml"), strings.Join([]string{
 		"agent: pi",
 		"steps:",
@@ -520,6 +526,7 @@ exit 0
 	oldPath := os.Getenv("PATH")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+oldPath)
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("MOCK_GIT_LOG", gitLog)
 
@@ -529,9 +536,7 @@ exit 0
 	if code != 0 {
 		t.Fatalf("runCLI() code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
 	}
-	if out := stdout.String(); !strings.Contains(out, "final review passed: true") {
-		t.Fatalf("stdout = %q", out)
-	}
+	assertSingleTraceFileContains(t, filepath.Join(dataHome, "nelsonctl", "traces"), []string{"run_meta", "run_end", "execution_context", "review_result"})
 }
 
 func TestRunCLIInitWritesConfig(t *testing.T) {
@@ -602,6 +607,23 @@ func assertSingleTraceFileContains(t *testing.T, dir string, wantTypes []string)
 	if !traceHasEventTypes(t, matches[0], wantTypes) {
 		data := mustReadFile(t, matches[0])
 		t.Fatalf("trace %s missing one of %v in %s", matches[0], wantTypes, data)
+	}
+}
+
+func assertSingleTraceFileContainsText(t *testing.T, dir string, wantText []string) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if err != nil {
+		t.Fatalf("glob trace files: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 trace file in %s, got %d (%v)", dir, len(matches), matches)
+	}
+	data := mustReadFile(t, matches[0])
+	for _, want := range wantText {
+		if !strings.Contains(data, want) {
+			t.Fatalf("trace %s missing %q in %s", matches[0], want, data)
+		}
 	}
 }
 

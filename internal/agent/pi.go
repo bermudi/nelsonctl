@@ -11,23 +11,25 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type piRPCAgent struct {
-	settings        settings
-	lookupPath      func(string) (string, error)
-	client          rpcTransport
-	events          chan Event
-	sessionEvents   chan Event
-	implSessionID   string
-	implSessionPath string
-	mu              sync.Mutex
-	closed          bool
-	workspaceSkills []string
-	lastSessionByID map[string]string
-	activeSessionID string
-	newClient       func(workDir string, skills []string) rpcTransport
+	settings             settings
+	lookupPath           func(string) (string, error)
+	client               rpcTransport
+	events               *queuedChannel[Event]
+	sessionEvents        chan Event
+	implSessionID        string
+	implSessionPath      string
+	mu                   sync.Mutex
+	closed               bool
+	workspaceSkills      []string
+	lastSessionByID      map[string]string
+	activeSessionID      string
+	newClient            func(workDir string, skills []string) rpcTransport
+	droppedSessionEvents atomic.Int64
 }
 
 func NewPiRPC(opts ...Option) Agent {
@@ -41,7 +43,7 @@ func NewPiRPC(opts ...Option) Agent {
 	agent := &piRPCAgent{
 		settings:        settings,
 		lookupPath:      nil,
-		events:          make(chan Event, settings.eventBufferSize()),
+		events:          newQueuedChannel[Event](settings.eventBufferSize()),
 		sessionEvents:   make(chan Event, settings.eventBufferSize()),
 		lastSessionByID: map[string]string{},
 	}
@@ -78,7 +80,7 @@ func (a *piRPCAgent) AsRPC() RPCAgent {
 }
 
 func (a *piRPCAgent) Events() <-chan Event {
-	return a.events
+	return a.events.Channel()
 }
 
 func (a *piRPCAgent) StartImplementationSession(ctx context.Context) (string, error) {
@@ -171,8 +173,10 @@ func (a *piRPCAgent) SendMessage(ctx context.Context, sessionID, prompt, model s
 	done := make(chan error, 1)
 	unsubscribe := a.consumeSessionEvents(sessionID, &stdout, done)
 	defer unsubscribe()
+	a.emit(Event{TracePayload: CommandStartEvent{Name: "prompt", Command: "prompt", WorkDir: a.settings.workDirectory(), Source: "pi_rpc", SessionID: sessionID}})
 
 	if _, err := a.client.Send(ctx, rpcCommand{Type: "prompt", Message: prompt}); err != nil {
+		a.emit(Event{TracePayload: CommandResultEvent{Name: "prompt", Command: "prompt", ExitCode: 1, DurationMs: time.Since(start).Milliseconds(), Error: err.Error(), Source: "pi_rpc", SessionID: sessionID}})
 		return nil, a.restartAfterCrash(ctx, err)
 	}
 	stepCtx := ctx
@@ -184,15 +188,21 @@ func (a *piRPCAgent) SendMessage(ctx context.Context, sessionID, prompt, model s
 	select {
 	case err := <-done:
 		res := &Result{Stdout: stdout.String(), ExitCode: 0, Duration: time.Since(start)}
+		a.flushDroppedSessionEvents()
 		if err != nil {
 			res.ExitCode = 1
+			a.emit(Event{TracePayload: CommandResultEvent{Name: "prompt", Command: "prompt", ExitCode: res.ExitCode, DurationMs: res.Duration.Milliseconds(), StdoutLen: len(res.Stdout), Error: err.Error(), Source: "pi_rpc", SessionID: sessionID}})
 			return res, err
 		}
+		a.emit(Event{TracePayload: CommandResultEvent{Name: "prompt", Command: "prompt", ExitCode: res.ExitCode, DurationMs: res.Duration.Milliseconds(), StdoutLen: len(res.Stdout), Source: "pi_rpc", SessionID: sessionID}})
 		a.emit(Event{Type: CompletionEvent, Content: "pi agent completed", Metadata: map[string]string{"session_id": sessionID}})
 		return res, nil
 	case <-stepCtx.Done():
 		_ = a.Abort(context.Background(), sessionID)
-		return &Result{Stdout: stdout.String(), ExitCode: 1, Duration: time.Since(start)}, stepCtx.Err()
+		res := &Result{Stdout: stdout.String(), ExitCode: 1, Duration: time.Since(start)}
+		a.emit(Event{TracePayload: CommandResultEvent{Name: "prompt", Command: "prompt", ExitCode: res.ExitCode, DurationMs: res.Duration.Milliseconds(), StdoutLen: len(res.Stdout), Error: stepCtx.Err().Error(), Source: "pi_rpc", SessionID: sessionID}})
+		a.flushDroppedSessionEvents()
+		return res, stepCtx.Err()
 	}
 }
 
@@ -219,7 +229,7 @@ func (a *piRPCAgent) Close() error {
 		_ = client.Close()
 	}
 	close(a.sessionEvents)
-	close(a.events)
+	a.events.Close()
 	return nil
 }
 
@@ -322,6 +332,7 @@ drain:
 					done <- fmt.Errorf("pi process exited")
 					return
 				}
+				a.flushDroppedSessionEvents()
 				if os.Getenv("NELSONCTL_DEBUG") != "" {
 					fmt.Fprintf(os.Stderr, "[DEBUG-agent] consume event: type=%s session_id=%q target_session=%q content_len=%d\n", event.Type, event.Metadata["session_id"], sessionID, len(event.Content))
 				}
@@ -347,6 +358,7 @@ drain:
 
 func (a *piRPCAgent) forwardEvents(client rpcTransport) {
 	for event := range client.Events() {
+		a.emitRPCSummary(event)
 		switch event.Type {
 		case "extension_ui_request":
 			if event.ID != "" {
@@ -367,6 +379,8 @@ func (a *piRPCAgent) forwardEvents(client rpcTransport) {
 				case "thinking_delta", "thinking_start":
 					// Ignore thinking tokens — not user-visible text
 					content = ""
+				case "toolcall_start", "toolcall_delta", "toolcall_end", "done", "error":
+					content = ""
 				default:
 					// toolcall_*, text_end, thinking_end — no visible text
 					content = ""
@@ -385,7 +399,6 @@ func (a *piRPCAgent) forwardEvents(client rpcTransport) {
 				a.mu.Unlock()
 			}
 			stopReason := stopReasonFromRPCEvent(event)
-			a.emit(Event{TracePayload: RPCRawEvent{RPCType: event.Type, StopReason: stopReason, SessionID: sessionID}})
 			// Pi fires agent_end at the end of every conversation turn.
 			// When stopReason is "toolUse", the agent is pausing to execute
 			// tool calls — it will continue automatically. Only treat the
@@ -398,6 +411,10 @@ func (a *piRPCAgent) forwardEvents(client rpcTransport) {
 				continue
 			}
 			a.emit(Event{Type: CompletionEvent, Content: "agent_end", Metadata: map[string]string{"session_id": sessionID}})
+		case "tool_execution_start":
+			a.emitToolExecutionStart(event)
+		case "tool_execution_end":
+			a.emitToolExecutionResult(event)
 		case "extension_error":
 			a.emit(Event{Type: ErrorEvent, Content: event.Error})
 		}
@@ -424,14 +441,74 @@ func (a *piRPCAgent) restartAfterCrash(ctx context.Context, cause error) error {
 }
 
 func (a *piRPCAgent) emit(event Event) {
-	select {
-	case a.events <- event:
-	default:
-	}
+	a.events.Send(event)
 	select {
 	case a.sessionEvents <- event:
 	default:
+		a.droppedSessionEvents.Add(1)
 	}
+}
+
+func (a *piRPCAgent) flushDroppedSessionEvents() {
+	count := a.droppedSessionEvents.Swap(0)
+	if count <= 0 {
+		return
+	}
+	a.events.Send(Event{TracePayload: RPCRawEvent{DroppedCount: int(count), DroppedStream: "pi_session_events", DroppedReason: "session events channel full"}})
+}
+
+func (a *piRPCAgent) emitRPCSummary(event rpcEvent) {
+	payload, err := summarizeRPCPayload(event)
+	if err != nil {
+		// Log the error but don't fail - trace data may be lost but core functionality continues
+		a.emit(Event{TracePayload: RPCRawEvent{RPCType: event.Type, SessionID: sessionIDForRPCEvent(event, a.activeSession()), StopReason: "error", PayloadSummary: fmt.Sprintf("failed to summarize payload: %v", err)}})
+		return
+	}
+	stopReason := ""
+	if event.Type == "agent_end" {
+		stopReason = stopReasonFromRPCEvent(event)
+	}
+	a.emit(Event{TracePayload: RPCRawEvent{RPCType: event.Type, SessionID: sessionIDForRPCEvent(event, a.activeSession()), StopReason: stopReason, PayloadSummary: rpcPayloadSummary(event), Payload: payload}})
+}
+
+func (a *piRPCAgent) emitToolExecutionStart(event rpcEvent) {
+	_, commandText, commandArgs := commandDetailsFromToolEvent(event)
+	a.emit(Event{TracePayload: CommandStartEvent{
+		Name:            event.Type,
+		Command:         commandText,
+		Args:            commandArgs,
+		WorkDir:         a.settings.workDirectory(),
+		Source:          "pi_rpc",
+		SessionID:       sessionIDForRPCEvent(event, a.activeSession()),
+		ToolCallID:      event.ToolCallID,
+		ToolName:        event.ToolName,
+		ProviderSummary: providerSummaryFromToolEvent(event),
+	}})
+}
+
+func (a *piRPCAgent) emitToolExecutionResult(event rpcEvent) {
+	commandName, commandText, commandArgs := commandDetailsFromToolEvent(event)
+	stdoutLen, stderrLen, exitCode := toolResultSummary(event)
+	a.emit(Event{TracePayload: CommandResultEvent{
+		Name:        event.Type,
+		Command:     commandText,
+		ExitCode:    exitCode,
+		StdoutLen:   stdoutLen,
+		StderrLen:   stderrLen,
+		Error:       errorTextFromToolEvent(event),
+		Source:      "pi_rpc",
+		SessionID:   sessionIDForRPCEvent(event, a.activeSession()),
+		ToolCallID:  event.ToolCallID,
+		ToolName:    event.ToolName,
+		CommandName: commandName,
+		CommandArgs: commandArgs,
+	}})
+}
+
+func (a *piRPCAgent) activeSession() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.activeSessionID
 }
 
 func pickModel(requested, fallback string) string {

@@ -337,6 +337,23 @@ func (e *phaseExecution) dispatcher(final bool) ctrl.Dispatcher {
 			e.exhaustedPending = false
 			return nil
 		},
+		OnToolCallStart: func(call ctrl.ToolCall) {
+			e.pipeline.emit(ControllerToolCallStartEvent{ID: call.ID, Tool: string(call.Name), Arguments: append(json.RawMessage(nil), call.Arguments...)})
+		},
+		OnToolCallResult: func(call ctrl.ToolCall, result ctrl.DispatchResult, err error) {
+			event := ControllerToolCallResultEvent{
+				ID:             call.ID,
+				Tool:           string(call.Name),
+				Approved:       result.Approved,
+				Summary:        result.Summary,
+				ContentLen:     len(result.Content),
+				UserMessageLen: len(result.UserMessage),
+			}
+			if err != nil {
+				event.Error = err.Error()
+			}
+			e.pipeline.emit(event)
+		},
 	})
 	return controllerEventDispatcher{pipeline: e.pipeline, inner: base}
 }

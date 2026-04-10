@@ -12,21 +12,23 @@ import (
 )
 
 const (
-	channelCap = 1024
-	bufSize    = 64 * 1024
+	bufSize        = 64 * 1024
+	queueSoftLimit = 10000 // Warn when queue exceeds this size
+	queueHardLimit = 50000 // Drop events when queue exceeds this size
 )
 
 type TraceWriter struct {
 	path      string
 	file      *os.File
 	writer    *bufio.Writer
-	ch        chan interface{}
+	queue     []interface{}
+	queueMu   sync.Mutex
+	queueCond *sync.Cond
 	done      chan struct{}
 	failed    bool
 	failMu    sync.RWMutex
 	closeOnce sync.Once
 	closed    bool
-	closedMu  sync.Mutex
 }
 
 func New(path string, meta RunMetaEvent) (*TraceWriter, error) {
@@ -51,9 +53,9 @@ func New(path string, meta RunMetaEvent) (*TraceWriter, error) {
 		path:   path,
 		file:   file,
 		writer: writer,
-		ch:     make(chan interface{}, channelCap),
 		done:   make(chan struct{}),
 	}
+	tw.queueCond = sync.NewCond(&tw.queueMu)
 
 	go tw.process()
 
@@ -64,12 +66,6 @@ func (tw *TraceWriter) Send(msg interface{}) {
 	if msg == nil {
 		return
 	}
-	tw.closedMu.Lock()
-	closed := tw.closed
-	tw.closedMu.Unlock()
-	if closed {
-		return
-	}
 
 	tw.failMu.RLock()
 	failed := tw.failed
@@ -77,23 +73,39 @@ func (tw *TraceWriter) Send(msg interface{}) {
 	if failed {
 		return
 	}
-	select {
-	case tw.ch <- msg:
-	default:
+
+	tw.queueMu.Lock()
+	defer tw.queueMu.Unlock()
+	if tw.closed {
+		return
 	}
+
+	// Check hard limit - drop event if queue is too large
+	if len(tw.queue) >= queueHardLimit {
+		fmt.Fprintf(os.Stderr, "WARNING trace: queue at hard limit (%d), dropping event\n", queueHardLimit)
+		return
+	}
+
+	// Warn when approaching soft limit
+	if len(tw.queue) == queueSoftLimit {
+		fmt.Fprintf(os.Stderr, "WARNING trace: queue at soft limit (%d), events may be dropped if growth continues\n", queueSoftLimit)
+	}
+
+	tw.queue = append(tw.queue, msg)
+	tw.queueCond.Signal()
 }
 
 func (tw *TraceWriter) Close(runEnd RunEndEvent) error {
-	tw.closedMu.Lock()
+	tw.queueMu.Lock()
 	if tw.closed {
-		tw.closedMu.Unlock()
+		tw.queueMu.Unlock()
 		return nil
 	}
 	tw.closed = true
-	tw.closedMu.Unlock()
+	tw.queueCond.Broadcast()
+	tw.queueMu.Unlock()
 
 	tw.closeOnce.Do(func() {
-		close(tw.ch)
 		<-tw.done
 	})
 
@@ -126,7 +138,20 @@ func (tw *TraceWriter) Close(runEnd RunEndEvent) error {
 func (tw *TraceWriter) process() {
 	defer close(tw.done)
 	enc := json.NewEncoder(tw.writer)
-	for msg := range tw.ch {
+	for {
+		tw.queueMu.Lock()
+		for len(tw.queue) == 0 && !tw.closed {
+			tw.queueCond.Wait()
+		}
+		if len(tw.queue) == 0 && tw.closed {
+			tw.queueMu.Unlock()
+			break
+		}
+		msg := tw.queue[0]
+		tw.queue[0] = nil
+		tw.queue = tw.queue[1:]
+		tw.queueMu.Unlock()
+
 		tw.failMu.RLock()
 		failed := tw.failed
 		tw.failMu.RUnlock()
@@ -199,6 +224,26 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 			Summary:   e.Summary,
 			Analyzing: e.Analyzing,
 			Ts:        timestamp(),
+		}
+	case pipeline.ControllerToolCallStartEvent:
+		return ControllerToolCallStartEvent{
+			Type:      "controller_tool_call_start",
+			ID:        e.ID,
+			Tool:      e.Tool,
+			Arguments: append(json.RawMessage(nil), e.Arguments...),
+			Ts:        timestamp(),
+		}
+	case pipeline.ControllerToolCallResultEvent:
+		return ControllerToolCallResultEvent{
+			Type:           "controller_tool_call_result",
+			ID:             e.ID,
+			Tool:           e.Tool,
+			Approved:       e.Approved,
+			Summary:        e.Summary,
+			ContentLen:     e.ContentLen,
+			UserMessageLen: e.UserMessageLen,
+			Error:          e.Error,
+			Ts:             timestamp(),
 		}
 	case pipeline.TauntEvent:
 		return TauntEvent{
@@ -305,14 +350,6 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 				Success:  payload.Success,
 				Ts:       timestamp(),
 			}
-		case agent.RPCRawEvent:
-			return RPCRawTraceEvent{
-				Type:       "rpc_event",
-				RPCType:    payload.RPCType,
-				StopReason: payload.StopReason,
-				SessionID:  payload.SessionID,
-				Ts:         timestamp(),
-			}
 		case agent.EventsDrainedEvent:
 			return EventsDrainedTraceEvent{
 				Type:  "events_drained",
@@ -324,6 +361,59 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 				Type:  "agent_restarted",
 				Cause: payload.Cause,
 				Ts:    timestamp(),
+			}
+		case agent.CommandStartEvent:
+			return CommandStartTraceEvent{
+				Type:            "command_start",
+				Name:            payload.Name,
+				Command:         payload.Command,
+				Args:            append([]string(nil), payload.Args...),
+				WorkDir:         payload.WorkDir,
+				Source:          payload.Source,
+				SessionID:       payload.SessionID,
+				Step:            payload.Step,
+				ToolCallID:      payload.ToolCallID,
+				ToolName:        payload.ToolName,
+				ProviderSummary: payload.ProviderSummary,
+				Ts:              timestamp(),
+			}
+		case agent.CommandResultEvent:
+			return CommandResultTraceEvent{
+				Type:        "command_result",
+				Name:        payload.Name,
+				Command:     payload.Command,
+				ExitCode:    payload.ExitCode,
+				DurationMs:  payload.DurationMs,
+				StdoutLen:   payload.StdoutLen,
+				StderrLen:   payload.StderrLen,
+				Error:       payload.Error,
+				Source:      payload.Source,
+				SessionID:   payload.SessionID,
+				Step:        payload.Step,
+				ToolCallID:  payload.ToolCallID,
+				ToolName:    payload.ToolName,
+				CommandName: payload.CommandName,
+				CommandArgs: append([]string(nil), payload.CommandArgs...),
+				Ts:          timestamp(),
+			}
+		case agent.RPCRawEvent:
+			if payload.DroppedCount > 0 && payload.DroppedStream != "" {
+				return DroppedEventsTraceEvent{
+					Type:   "dropped_events",
+					Stream: payload.DroppedStream,
+					Count:  payload.DroppedCount,
+					Reason: payload.DroppedReason,
+					Ts:     timestamp(),
+				}
+			}
+			return RPCRawTraceEvent{
+				Type:           "rpc_event",
+				RPCType:        payload.RPCType,
+				StopReason:     payload.StopReason,
+				SessionID:      payload.SessionID,
+				PayloadSummary: payload.PayloadSummary,
+				Payload:        append(json.RawMessage(nil), payload.Payload...),
+				Ts:             timestamp(),
 			}
 		default:
 			return nil

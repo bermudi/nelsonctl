@@ -26,6 +26,8 @@ type Handlers struct {
 	RunReview         func(ctx context.Context) (string, error)
 	Approve           func(ctx context.Context, summary string) error
 	AllowAbsolute     bool
+	OnToolCallStart   func(call ToolCall)
+	OnToolCallResult  func(call ToolCall, result DispatchResult, err error)
 }
 
 type Dispatcher interface {
@@ -87,73 +89,94 @@ func NewToolDispatcher(handlers Handlers) *ToolDispatcher {
 }
 
 func (d *ToolDispatcher) Dispatch(ctx context.Context, call ToolCall) (DispatchResult, error) {
+	if d.handlers.OnToolCallStart != nil {
+		d.handlers.OnToolCallStart(call)
+	}
+	var (
+		result DispatchResult
+		err    error
+	)
+	defer func() {
+		if d.handlers.OnToolCallResult != nil {
+			d.handlers.OnToolCallResult(call, result, err)
+		}
+	}()
 	switch call.Name {
 	case ToolReadFile:
 		var args ReadFileArgs
-		if err := decodeArgs(call.Arguments, &args); err != nil {
+		if err = decodeArgs(call.Arguments, &args); err != nil {
 			return DispatchResult{}, err
 		}
 		path, err := d.resolvePath(args.Path)
 		if err != nil {
-			return DispatchResult{Content: err.Error()}, nil
+			result = DispatchResult{Content: err.Error()}
+			return result, nil
 		}
 		content, err := d.handlers.ReadFile(ctx, path)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return DispatchResult{Content: fmt.Sprintf("File %s does not exist.", filepath.ToSlash(args.Path))}, nil
+				result = DispatchResult{Content: fmt.Sprintf("File %s does not exist.", filepath.ToSlash(args.Path))}
+				return result, nil
 			}
-			return DispatchResult{Content: fmt.Sprintf("Error reading %s: %s", filepath.ToSlash(args.Path), err)}, nil
+			result = DispatchResult{Content: fmt.Sprintf("Error reading %s: %s", filepath.ToSlash(args.Path), err)}
+			return result, nil
 		}
-		return DispatchResult{Content: content}, nil
+		result = DispatchResult{Content: content}
+		return result, nil
 	case ToolGetDiff:
 		var args GetDiffArgs
-		if err := decodeArgs(call.Arguments, &args); err != nil {
+		if err = decodeArgs(call.Arguments, &args); err != nil {
 			return DispatchResult{}, err
 		}
 		content, err := d.handlers.GetDiff(ctx)
 		if err != nil {
 			return DispatchResult{}, err
 		}
-		return DispatchResult{Content: content}, nil
+		result = DispatchResult{Content: content}
+		return result, nil
 	case ToolSubmitPrompt:
 		var args SubmitPromptArgs
-		if err := decodeArgs(call.Arguments, &args); err != nil {
+		if err = decodeArgs(call.Arguments, &args); err != nil {
 			return DispatchResult{}, err
 		}
 		content, err := d.handlers.SubmitPrompt(ctx, strings.TrimSpace(args.Prompt))
 		if err != nil {
 			return DispatchResult{}, fmt.Errorf("submit_prompt: %w", err)
 		}
-		result := DispatchResult{Content: content}
+		result = DispatchResult{Content: content}
 		if d.handlers.AfterSubmitPrompt != nil {
 			result.UserMessage = strings.TrimSpace(d.handlers.AfterSubmitPrompt())
 		}
 		return result, nil
 	case ToolRunReview:
 		var args RunReviewArgs
-		if err := decodeArgs(call.Arguments, &args); err != nil {
+		if err = decodeArgs(call.Arguments, &args); err != nil {
 			return DispatchResult{}, err
 		}
 		content, err := d.handlers.RunReview(ctx)
 		if err != nil {
 			return DispatchResult{}, fmt.Errorf("run_review: %w", err)
 		}
-		return DispatchResult{Content: content}, nil
+		result = DispatchResult{Content: content}
+		return result, nil
 	case ToolApprove:
 		var args ApproveArgs
-		if err := decodeArgs(call.Arguments, &args); err != nil {
+		if err = decodeArgs(call.Arguments, &args); err != nil {
 			return DispatchResult{}, err
 		}
 		summary := strings.TrimSpace(args.Summary)
 		if summary == "" {
-			return DispatchResult{}, fmt.Errorf("approve requires a non-empty summary")
+			err = fmt.Errorf("approve requires a non-empty summary")
+			return DispatchResult{}, err
 		}
 		if err := d.handlers.Approve(ctx, summary); err != nil {
 			return DispatchResult{}, fmt.Errorf("approve: %w", err)
 		}
-		return DispatchResult{Content: summary, Approved: true, Summary: summary}, nil
+		result = DispatchResult{Content: summary, Approved: true, Summary: summary}
+		return result, nil
 	default:
-		return DispatchResult{}, fmt.Errorf("unsupported controller tool %q", call.Name)
+		err = fmt.Errorf("unsupported controller tool %q", call.Name)
+		return DispatchResult{}, err
 	}
 }
 

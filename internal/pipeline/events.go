@@ -1,5 +1,7 @@
 package pipeline
 
+import "encoding/json"
+
 // AgentInvokeEvent is emitted before an agent step begins.
 type AgentInvokeEvent struct {
 	Agent     string
@@ -45,9 +47,29 @@ type PREvent struct {
 	URL   string
 }
 
-func (AgentInvokeEvent) pipelineEvent()  {}
-func (AgentResultEvent) pipelineEvent()  {}
-func (ReviewResultEvent) pipelineEvent() {}
-func (GitCommitEvent) pipelineEvent()    {}
-func (GitPushEvent) pipelineEvent()      {}
-func (PREvent) pipelineEvent()           {}
+// ControllerToolCallStartEvent is emitted before dispatching a controller tool call.
+type ControllerToolCallStartEvent struct {
+	ID        string
+	Tool      string
+	Arguments json.RawMessage
+}
+
+// ControllerToolCallResultEvent is emitted after a controller tool call finishes.
+type ControllerToolCallResultEvent struct {
+	ID             string
+	Tool           string
+	Approved       bool
+	Summary        string
+	ContentLen     int
+	UserMessageLen int
+	Error          string
+}
+
+func (AgentInvokeEvent) pipelineEvent()              {}
+func (AgentResultEvent) pipelineEvent()              {}
+func (ReviewResultEvent) pipelineEvent()             {}
+func (GitCommitEvent) pipelineEvent()                {}
+func (GitPushEvent) pipelineEvent()                  {}
+func (PREvent) pipelineEvent()                       {}
+func (ControllerToolCallStartEvent) pipelineEvent()  {}
+func (ControllerToolCallResultEvent) pipelineEvent() {}
