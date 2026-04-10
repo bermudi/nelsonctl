@@ -73,15 +73,15 @@ The system SHALL emit a `run_end` event as the last line of every trace file con
 - **THEN** the last trace line has `type: "run_end"`, `status: "interrupted"`
 
 ### Requirement: Trace Event Enrichment
-The system SHALL enrich pipeline event types with contextual data needed for traces. Enrichment SHALL be done by adding fields to pipeline event structs so that the TraceWriter can serialize events directly without a sidecar context. State events SHALL include the state name. Phase start events SHALL include the phase number, name, and attempt. Phase result events SHALL include the review output, pass/fail status, and attempt count. Agent invocation events SHALL include the prompt text, agent name, exit code, duration, and stdout/stderr lengths. Review result events SHALL include the full review output and the verdict. Commit events SHALL include the commit subject and changed files.
+The system SHALL enrich pipeline event types with contextual data needed for traces. Enrichment SHALL be done by adding fields to pipeline event structs so that the TraceWriter can serialize events directly without a sidecar context. State events SHALL include the state name. Phase start events SHALL include the phase number, name, and attempt. Phase result events SHALL include the review output, pass/fail status, and attempt count. Agent invocation events SHALL include the prompt text, agent name, step, model, session ID, exit code, duration, and stdout/stderr lengths. Review result events SHALL include the full review output and the verdict. Commit events SHALL include the commit subject and changed files. Controller activity events SHALL include the tool name and any summary. Execution context events SHALL include the mode, agent, step, model, and resumed flag.
 
 #### Scenario: Phase start event
 - **WHEN** a phase begins execution
 - **THEN** the trace contains `{"type":"phase_start","phase":1,"name":"...","attempt":1,"ts":"..."}`
 
 #### Scenario: Agent invocation event
-- **WHEN** an agent is invoked
-- **THEN** the trace contains `{"type":"agent_invoke","agent":"opencode","prompt":"...","work_dir":"...","ts":"..."}` followed by `{"type":"agent_result","exit_code":0,"duration_ms":45230,"stdout_len":8432,"stderr_len":0,"ts":"..."}`
+- **WHEN** an agent is invoked for a step
+- **THEN** the trace contains `{"type":"agent_invoke","agent":"pi","step":"apply","model":"opencode-go/kimi-k2.5","session_id":"...","prompt":"...","work_dir":"...","ts":"..."}` followed by `{"type":"agent_result","exit_code":0,"duration_ms":45230,"stdout_len":8432,"stderr_len":0,"ts":"..."}`
 
 #### Scenario: Review result event
 - **WHEN** a review pass completes
@@ -126,6 +126,45 @@ The system SHALL enrich pipeline event types with contextual data needed for tra
 #### Scenario: Summary event
 - **WHEN** the pipeline emits the run summary
 - **THEN** the trace contains `{"type":"summary","phases_completed":3,"phases_failed":1,"duration":"2m30s","branch":"change/my-feature","ts":"..."}`
+
+### Requirement: Pi Adapter Event Capture
+The system SHALL capture Pi adapter internals in traces by routing adapter events through the same fan-out point as pipeline events. The Pi adapter SHALL emit traceable events for: session creation (with session type and optional parent), session switching, model selection (with success/failure), RPC event summaries (agent_end with stop reason), stale event draining (with count), and crash recovery (with cause). These events SHALL flow through the agent's `Events()` channel into the trace writer. For non-Pi agents (CLI adapters like opencode, claude, codex, amp), adapter events SHALL NOT be emitted — the pipeline-level `agent_invoke` and `agent_result` events are sufficient.
+
+#### Scenario: Pi adapter session created
+- **WHEN** the Pi adapter creates a new implementation session
+- **THEN** the trace contains `{"type":"session_created","session_id":"...","session_type":"impl","ts":"..."}`
+
+#### Scenario: Pi adapter review session created
+- **WHEN** the Pi adapter forks a review session from the implementation session
+- **THEN** the trace contains `{"type":"session_created","session_id":"...","session_type":"review","parent_session":"/path/to/impl/session.json","ts":"..."}`
+
+#### Scenario: Pi adapter session switched
+- **WHEN** the Pi adapter switches the active session
+- **THEN** the trace contains `{"type":"session_switched","session_id":"...","ts":"..."}`
+
+#### Scenario: Pi adapter model set success
+- **WHEN** the Pi adapter successfully sets the model
+- **THEN** the trace contains `{"type":"model_set","provider":"opencode-go","model":"kimi-k2.5","success":true,"ts":"..."}`
+
+#### Scenario: Pi adapter model set failure
+- **WHEN** the Pi adapter fails to set the model
+- **THEN** the trace contains `{"type":"model_set","provider":"minimax","model":"minimax-m2.7","success":false,"ts":"..."}`
+
+#### Scenario: Pi adapter RPC event
+- **WHEN** the Pi adapter receives an `agent_end` RPC event
+- **THEN** the trace contains `{"type":"rpc_event","rpc_type":"agent_end","stop_reason":"toolUse","session_id":"...","ts":"..."}`
+
+#### Scenario: Pi adapter events drained
+- **WHEN** the Pi adapter drains stale events
+- **THEN** the trace contains `{"type":"events_drained","count":4,"ts":"..."}`
+
+#### Scenario: Pi adapter crash recovery
+- **WHEN** the Pi adapter restarts after a crash
+- **THEN** the trace contains `{"type":"agent_restarted","cause":"pi process exited unexpectedly","ts":"..."}`
+
+#### Scenario: CLI adapter produces no adapter events
+- **WHEN** nelsonctl runs with a CLI adapter (opencode, claude, etc.)
+- **THEN** the trace contains `agent_invoke` and `agent_result` events but no `session_created`, `model_set`, `rpc_event`, or `events_drained` events
 
 ### Requirement: Trace Writer Error Isolation
 The trace writer SHALL NOT propagate errors to the pipeline. If the trace writer encounters an I/O error (disk full, permission denied, write failure), it SHALL log the error to stderr, set an internal failed flag, and skip all subsequent writes for the remainder of the run. The pipeline SHALL continue executing normally regardless of trace writer state.
