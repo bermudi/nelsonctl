@@ -312,6 +312,92 @@ func TestPipelineRefusesDirtyUnrelatedBranch(t *testing.T) {
 	}
 }
 
+func TestPipelineDetectsNoOpFix(t *testing.T) {
+	tmp := t.TempDir()
+	changeDir := filepath.Join(tmp, "specs", "changes", "noop-fix")
+	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Fix test\n- [ ] Task one\n")
+	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
+
+	// fakeGit returns the same diff every time — simulates an agent that claims
+	// to fix but doesn't actually change any files.
+	git := &fakeGit{changedFiles: []string{"file.go"}, stagedFiles: []string{"file.go"}, diff: "diff --git a/file b/file"}
+
+	var fixContent string
+	controller := &fakeController{phaseFn: func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+		// Apply
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "1", Name: ctrl.ToolSubmitPrompt, Arguments: []byte(`{"prompt":"apply"}`)}); err != nil {
+			return nil, err
+		}
+		// Review (fails to trigger fix cycle)
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "2", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		// Fix — agent reports success but diff is unchanged
+		fixResult, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolSubmitPrompt, Arguments: []byte(`{"prompt":"fix the issue"}`)})
+		if err != nil {
+			return nil, err
+		}
+		fixContent = fixResult.Content
+
+		// Review again
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		// Approve
+		approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"passed"}`)})
+		if err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{Summary: approve.Summary}, nil
+	}, finalFn: func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "6", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			return nil, err
+		}
+		approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "7", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final"}`)})
+		if err != nil {
+			return nil, err
+		}
+		return &ctrl.Result{Summary: approve.Summary}, nil
+	}}
+
+	p := &Pipeline{
+		ChangePath:    changeDir,
+		RepoDir:       tmp,
+		Agent:         &fakeAgent{},
+		Controller:    controller,
+		Git:           git,
+		PR:            &fakePR{note: "skipped"},
+		MaxAttempts:   3,
+		Config:        config.Config{Steps: config.DefaultConfig().Steps},
+		processExists: func(pid int) bool { return false },
+		now:           time.Now,
+	}
+
+	report, err := p.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !report.Phases[0].Passed {
+		t.Fatalf("phase should still pass (controller approved after retry)")
+	}
+
+	// The key assertion: the fix step must have detected the no-op.
+	if !strings.Contains(fixContent, "no file changes were detected") {
+		t.Fatalf("fix dispatch content should warn about no-op fix, got: %q", fixContent)
+	}
+
+	// Verify 2 diff calls (pre-fix + post-fix).
+	diffCount := 0
+	for _, call := range git.calls {
+		if call == "diff" {
+			diffCount++
+		}
+	}
+	if diffCount < 2 {
+		t.Fatalf("expected at least 2 diff calls for fix verification, got %d", diffCount)
+	}
+}
+
 func TestPipelineLockHandling(t *testing.T) {
 	tmp := t.TempDir()
 	p := &Pipeline{processExists: func(pid int) bool { return pid == 123 }, now: func() time.Time { return time.Unix(2, 0) }}

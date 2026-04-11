@@ -380,6 +380,17 @@ func (e *phaseExecution) submitPrompt(ctx context.Context, prompt string, final 
 		step = agent.StepFix
 		model = e.pipeline.Config.Steps.Fix.Model
 	}
+
+	// Capture pre-fix diff so we can verify the agent actually changed something.
+	var preFixDiff string
+	preDiffOK := false
+	if step == agent.StepFix {
+		if diff, err := e.pipeline.Git.Diff(ctx); err == nil {
+			preFixDiff = diff
+			preDiffOK = true
+		}
+	}
+
 	trimmedPrompt := strings.TrimSpace(prompt)
 	e.pipeline.emit(ExecutionContextEvent{Mode: e.pipeline.Mode, Agent: e.pipeline.AgentName, Step: string(step), Model: model, Resumed: false})
 	e.pipeline.emit(AgentInvokeEvent{Agent: e.pipeline.AgentName, Step: string(step), Model: model, SessionID: sessionIDForStep(ctx, e.pipeline.Agent, step), Prompt: trimmedPrompt, WorkDir: e.pipeline.RepoDir})
@@ -393,6 +404,16 @@ func (e *phaseExecution) submitPrompt(ctx context.Context, prompt string, final 
 	if resultExitCode(res, nil) != 0 {
 		return fmt.Sprintf("Agent step %s exited with code %d. Output:\n%s", step, resultExitCode(res, nil), strings.TrimSpace(reviewOutput(resultText(res), ""))), nil
 	}
+
+	// Post-fix verification: detect no-op fixes where the agent reported success
+	// but didn't actually change any files. This catches the common failure mode
+	// where the LLM describes what it would do without executing the edits.
+	if step == agent.StepFix && preDiffOK {
+		if postDiff, err := e.pipeline.Git.Diff(ctx); err == nil && postDiff == preFixDiff {
+			return "Agent reported success but no file changes were detected since the last attempt. The fix may not have been applied. Consider inspecting the current diff with get_diff and retrying with a more explicit prompt.", nil
+		}
+	}
+
 	return "Agent completed successfully.", nil
 }
 
