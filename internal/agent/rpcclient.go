@@ -104,10 +104,7 @@ func (c *rpcClient) Start(ctx context.Context) error {
 	c.readersWG.Add(2)
 	go c.readStdout()
 	go c.readStderr()
-	time.Sleep(100 * time.Millisecond)
-	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-		return fmt.Errorf("pi rpc process exited immediately: %s", c.stderrBuf.String())
-	}
+	go c.watchProcessExit()
 	return nil
 }
 
@@ -207,6 +204,7 @@ func (c *rpcClient) SendNoResponse(command rpcCommand) error {
 func (c *rpcClient) readStdout() {
 	defer c.readersWG.Done()
 	defer close(c.closed)
+	defer c.events.Close() // signal that no more events will come
 	scanner := bufio.NewScanner(c.stdout)
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -268,4 +266,17 @@ func (c *rpcClient) Stderr() string {
 func envToArgs(env []string) []string {
 	_ = env
 	return nil
+}
+
+// watchProcessExit waits for the pi process to exit, then fails all pending
+// RPC responses. This prevents Send() from blocking forever when pi dies
+// before sending a response.
+func (c *rpcClient) watchProcessExit() {
+	<-c.closed // closed by readStdout when stdout pipe closes
+	c.mu.Lock()
+	for id, ch := range c.responses {
+		ch <- rpcResponse{ID: id, Success: false, Error: "pi process exited"}
+		delete(c.responses, id)
+	}
+	c.mu.Unlock()
 }
