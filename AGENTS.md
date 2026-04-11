@@ -35,6 +35,10 @@ For each phase:
 
 After all phases pass, a final pre-archive review runs, then the branch is pushed and a PR is opened via `gh`.
 
+## Pi Source Code — Read-Only Reference
+
+Pi's source code lives at `~/build/pi-mono/packages/coding-agent`, but **Pi was installed via `pnpm`** — the running binary comes from the pnpm store, not that directory. **Do not edit files under `~/build/pi-mono/packages/coding-agent`** expecting changes to take effect; they won't. That tree is a read-only reference for understanding Pi's internals, not a live installation. If you find a bug or limitation in Pi, **document it as an upstream issue** (in AGENTS.md, a GitHub issue, or similar) rather than patching the local source. Patches there are invisible to the running process and will only cause confusion.
+
 ## Key Design Decisions
 
 - **Prompts reference litespec skills explicitly.** This is a litespec harness. The agent must know to use `litespec-apply` and `litespec-review` skills — the prompts tell it to.

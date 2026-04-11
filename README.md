@@ -163,6 +163,42 @@ nelsonctl init
 
 CLI agents remain supported when you explicitly select one with `--agent` or config. In that case `nelsonctl` runs in Ralph mode and still uses the controller loop, but agent execution happens via shell-out instead of Pi RPC sessions.
 
+## Testing
+
+### Unit and integration tests
+
+```bash
+go test ./...
+```
+
+### E2E tests with real git (fast, no API keys)
+
+The `TestE2ERealGit*` tests in `internal/pipeline/e2e_test.go` run the full pipeline state machine against a real git repo in a temp directory with stub agent/controller. They verify branch creation, commit messages, file mutations, and report fields — no network, no API keys, runs in ~0.2s.
+
+```bash
+go test ./internal/pipeline/ -run TestE2E -count=1 -v
+```
+
+Covers single-phase and multi-phase scenarios with real `git init`, `git commit`, and `git push` (to a local bare remote).
+
+### Live E2E with real agent/controller
+
+`e2e.sh` drives the full pipeline against `~/build/nelsonctl-test/` with the real configured agent and controller. Costs API calls but tests everything end-to-end.
+
+```bash
+bash e2e.sh              # reset test repo + build + run + check
+bash e2e.sh --keep       # skip repo reset (re-run after a code fix)
+bash e2e.sh --debug      # with NELSONCTL_DEBUG=1
+bash e2e.sh --change foo # different change dir
+```
+
+Results are machine-readable: exit 0 = pass, exit 1 = fail. Logs are written to `e2e-logs/` with a `latest` symlink:
+
+```bash
+echo $?              # check result
+cat e2e-logs/latest  # read the full output
+```
+
 ## Notes
 
 - Run `nelsonctl` from the repository root.
