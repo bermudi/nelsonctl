@@ -62,8 +62,8 @@ var controllerProviderInfo = map[ControllerProvider]ControllerProviderInfo{
 		EnvVars:  []string{"OPENROUTER_API_KEY"},
 	},
 	ProviderOpenCode: {
-		Endpoint: "https://openrouter.ai/api/v1/chat/completions",
-		EnvVars:  []string{"OPENROUTER_API_KEY"},
+		Endpoint: "https://opencode.ai/zen/go/v1/chat/completions",
+		EnvVars:  []string{"OPENCODE_API_KEY"},
 	},
 	ProviderPoe: {
 		Endpoint:       "https://api.poe.com/v1/chat/completions",
