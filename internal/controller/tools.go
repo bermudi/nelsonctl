@@ -24,6 +24,7 @@ type Handlers struct {
 	SubmitPrompt      func(ctx context.Context, prompt string) (string, error)
 	AfterSubmitPrompt func() string
 	RunReview         func(ctx context.Context) (string, error)
+	Commit            func(ctx context.Context, message string) error
 	Approve           func(ctx context.Context, summary string) error
 	AllowAbsolute     bool
 	OnToolCallStart   func(call ToolCall)
@@ -81,6 +82,13 @@ func NewToolDispatcher(handlers Handlers) *ToolDispatcher {
 		handlers.Approve = func(ctx context.Context, summary string) error {
 			_ = ctx
 			_ = summary
+			return nil
+		}
+	}
+	if handlers.Commit == nil {
+		handlers.Commit = func(ctx context.Context, message string) error {
+			_ = ctx
+			_ = message
 			return nil
 		}
 	}
@@ -158,6 +166,21 @@ func (d *ToolDispatcher) Dispatch(ctx context.Context, call ToolCall) (DispatchR
 			return DispatchResult{}, fmt.Errorf("run_review: %w", err)
 		}
 		result = DispatchResult{Content: content}
+		return result, nil
+	case ToolCommit:
+		var args CommitArgs
+		if err = decodeArgs(call.Arguments, &args); err != nil {
+			return DispatchResult{}, err
+		}
+		message := strings.TrimSpace(args.Message)
+		if message == "" {
+			err = fmt.Errorf("commit requires a non-empty message")
+			return DispatchResult{}, err
+		}
+		if err := d.handlers.Commit(ctx, message); err != nil {
+			return DispatchResult{}, fmt.Errorf("commit: %w", err)
+		}
+		result = DispatchResult{Content: "Changes committed."}
 		return result, nil
 	case ToolApprove:
 		var args ApproveArgs

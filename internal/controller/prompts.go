@@ -26,7 +26,7 @@ func FinalReviewSystemPrompt(request FinalReviewRequest) string {
 func buildSystemPrompt(role string, failOn config.ReviewFailOn, tasks []string) string {
 	var builder strings.Builder
 	builder.WriteString(role)
-	builder.WriteString(" Drive the implementation loop through tool calls only. Read artifacts on demand with read_file, inspect workspace changes with get_diff, send implementation prompts with submit_prompt, run the mechanical review with run_review, and finish only by calling approve. Do not rely on regexes or output formats; reason about review output through comprehension. Only fail the review when issues at or above the configured threshold are present.")
+	builder.WriteString(" Drive the implementation loop through tool calls only. Read artifacts on demand with read_file, inspect workspace changes with get_diff, send implementation prompts with submit_prompt, run the mechanical review with run_review, commit changes with commit, and finish only by calling approve. Do not rely on regexes or output formats; reason about review output through comprehension. Only fail the review when issues at or above the configured threshold are present.")
 	builder.WriteString("\n\nreview.fail_on: ")
 	builder.WriteString(string(failOn))
 	builder.WriteString("\nOnly treat findings at or above this threshold as blocking.")

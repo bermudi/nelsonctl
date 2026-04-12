@@ -38,9 +38,8 @@ type State string
 
 const (
 	StateInit            State = "Init"
-	StateBranch          State = "Branch"
-	StateCommitArtifacts State = "CommitArtifacts"
-	StatePhaseLoop       State = "PhaseLoop"
+	StateBranch      State = "Branch"
+	StatePhaseLoop   State = "PhaseLoop"
 	StateFinalReview     State = "FinalReview"
 	StatePR              State = "PR"
 	StateDone            State = "Done"
@@ -197,13 +196,6 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 		return report, err
 	}
 
-	emitState(StateEvent{State: StateCommitArtifacts})
-	if !report.Resumed {
-		if err := p.commitArtifacts(ctx, changeName, phases); err != nil {
-			return report, err
-		}
-	}
-
 	emitState(StateEvent{State: StatePhaseLoop})
 	for _, phase := range remaining {
 		p.waitIfPaused(ctx)
@@ -297,9 +289,6 @@ func (p *Pipeline) runPhase(ctx context.Context, changeName string, phase Phase)
 	}
 	p.emit(PhaseResultEvent{Number: phase.Number, Passed: true, Attempts: report.Attempts, Review: report.ReviewOutput})
 
-	if err := p.commitPhase(ctx, changeName, phase); err != nil {
-		return report, err
-	}
 	return report, nil
 }
 
@@ -336,6 +325,9 @@ func (e *phaseExecution) dispatcher(final bool) ctrl.Dispatcher {
 			e.approvedSummary = strings.TrimSpace(summary)
 			e.exhaustedPending = false
 			return nil
+		},
+		Commit: func(ctx context.Context, message string) error {
+			return e.commitViaAgent(ctx, message)
 		},
 		OnToolCallStart: func(call ctrl.ToolCall) {
 			e.pipeline.emit(ControllerToolCallStartEvent{ID: call.ID, Tool: string(call.Name), Arguments: append(json.RawMessage(nil), call.Arguments...)})
@@ -542,43 +534,19 @@ func (p *Pipeline) acquireLock(path string) (func() error, error) {
 	}, nil
 }
 
-func (p *Pipeline) commitArtifacts(ctx context.Context, changeName string, phases []Phase) error {
-	if err := p.Git.AddAll(ctx); err != nil {
-		return err
-	}
-	files, err := p.Git.StagedFiles(ctx)
+func (e *phaseExecution) commitViaAgent(ctx context.Context, message string) error {
+	// Delegate commit to the agent: it stages files, writes .gitignore,
+	// and commits. This avoids nelsonctl having to know about
+	// node_modules, dist/, build artifacts, etc.
+	agentPrompt := fmt.Sprintf("Stage all your changes (ensure appropriate .gitignore entries for node_modules, dist, .env, build artifacts, etc.) and commit with this message:\n\n%s", message)
+	result, err := e.pipeline.Agent.ExecuteStep(ctx, agent.StepCommit, agentPrompt, e.pipeline.Config.Steps.Apply.Model)
 	if err != nil {
-		return fmt.Errorf("list staged files for artifacts commit: %w", err)
+		return fmt.Errorf("agent commit: %w", err)
 	}
-	body := fmt.Sprintf("Planning artifacts for %s\n\n%s", changeName, phaseSummary(phases))
-	subject := fmt.Sprintf("chore: add litespec artifacts for %s", changeName)
-	if err := p.Git.Commit(ctx, subject, body); err != nil {
-		return err
+	if result.ExitCode != 0 {
+		return fmt.Errorf("agent commit failed (exit %d): %s", result.ExitCode, result.Stderr)
 	}
-	p.emit(GitCommitEvent{Subject: subject, Files: files})
-	return nil
-}
-
-func (p *Pipeline) commitPhase(ctx context.Context, changeName string, phase Phase) error {
-	// Stage all changes including untracked files created by the agent.
-	// The agent may create new files (package.json, source files, etc.)
-	// which git diff --name-only (ChangedFiles) does not report.
-	// The lock file is excluded via .gitignore written during acquireLock.
-	if err := p.Git.AddAll(ctx); err != nil {
-		return fmt.Errorf("stage phase changes: %w", err)
-	}
-	stagedFiles, err := p.Git.StagedFiles(ctx)
-	if err != nil {
-		return fmt.Errorf("list staged files for phase commit: %w", err)
-	}
-	if len(stagedFiles) == 0 {
-		return nil
-	}
-	subject := fmt.Sprintf("feat(%s): complete phase %d - %s", changeName, phase.Number, phase.Name)
-	if err := p.Git.Commit(ctx, subject, phaseBody(phase)); err != nil {
-		return err
-	}
-	p.emit(GitCommitEvent{Subject: subject, Files: stagedFiles})
+	e.pipeline.emit(GitCommitEvent{Subject: message})
 	return nil
 }
 

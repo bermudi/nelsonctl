@@ -18,6 +18,7 @@ const (
 	StepReview      Step = "review"
 	StepFix         Step = "fix"
 	StepFinalReview Step = "final_review"
+	StepCommit      Step = "commit"
 )
 
 type EventType string

@@ -175,7 +175,7 @@ func TestPipelineRunUsesControllerAndScopedPhaseCommit(t *testing.T) {
 	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: Foundation\n- [ ] Task one\n")
 	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
 
-	fa := &fakeAgent{results: []agent.Result{{Stdout: "apply ok"}, {Stdout: "review ok"}}}
+	fa := &fakeAgent{results: []agent.Result{{Stdout: "apply ok"}, {Stdout: "review ok"}, {Stdout: "commit ok"}, {Stdout: "final review ok"}}}
 	git := &fakeGit{changedFiles: []string{"internal/pipeline/pipeline.go"}, stagedFiles: []string{"internal/pipeline/pipeline.go"}, diff: "diff --git a/file b/file"}
 	pr := &fakePR{note: "created", url: "https://example.test/pr/1"}
 	controller := &fakeController{phaseFn: func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
@@ -191,16 +191,19 @@ func TestPipelineRunUsesControllerAndScopedPhaseCommit(t *testing.T) {
 		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "2", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
 			return nil, err
 		}
-		approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)})
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolCommit, Arguments: []byte(`{"message":"feat(test): phase 1"}`)}); err != nil {
+			return nil, err
+		}
+		approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)})
 		if err != nil {
 			return nil, err
 		}
 		return &ctrl.Result{Summary: approve.Summary}, nil
 	}, finalFn: func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
-		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
 			return nil, err
 		}
-		approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)})
+		approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "6", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)})
 		if err != nil {
 			return nil, err
 		}
@@ -224,18 +227,13 @@ func TestPipelineRunUsesControllerAndScopedPhaseCommit(t *testing.T) {
 		"is-clean",
 		"branch:change/initial-scaffold",
 		"has-tracked",
-		"add-all",
-		"staged-files",
-		"commit:chore: add litespec artifacts for initial-scaffold|Planning artifacts for initial-scaffold\n\nPhase 1: Foundation",
-		"add-all",
-		"staged-files",
-		"commit:feat(initial-scaffold): complete phase 1 - Foundation|Phase 1: Foundation\n- [x] Task one",
 		"push:origin|change/initial-scaffold|true",
 	}
 	if !reflect.DeepEqual(git.calls, wantGitCalls) {
 		t.Fatalf("git.calls = %#v, want %#v", git.calls, wantGitCalls)
 	}
-	if got, want := len(fa.calls), 3; got != want {
+	// Agent called 4 times: apply, review, commit, final_review
+	if got, want := len(fa.calls), 4; got != want {
 		t.Fatalf("len(agent.calls) = %d, want %d", got, want)
 	}
 	if !strings.Contains(fa.calls[0], "apply|minimax/minimax-m2.7|apply this phase") {
@@ -244,8 +242,11 @@ func TestPipelineRunUsesControllerAndScopedPhaseCommit(t *testing.T) {
 	if !strings.Contains(fa.calls[1], "review|moonshotai/kimi-k2.5|Use your litespec-review skill") {
 		t.Fatalf("unexpected review call: %q", fa.calls[1])
 	}
-	if !strings.Contains(fa.calls[2], "final_review|moonshotai/kimi-k2.5|Use your litespec-review skill in pre-archive mode") {
-		t.Fatalf("unexpected final review call: %q", fa.calls[2])
+	if !strings.Contains(fa.calls[2], "commit|minimax/minimax-m2.7|Stage all your changes") {
+		t.Fatalf("unexpected commit call: %q", fa.calls[2])
+	}
+	if !strings.Contains(fa.calls[3], "final_review|moonshotai/kimi-k2.5|Use your litespec-review skill in pre-archive mode") {
+		t.Fatalf("unexpected final review call: %q", fa.calls[3])
 	}
 }
 
@@ -255,7 +256,7 @@ func TestPipelineResumeCreatesRecoveryCommitAndStartsAtFirstUncheckedPhase(t *te
 	mustWriteFile(t, filepath.Join(changeDir, "tasks.md"), "# Tasks\n\n## Phase 1: One\n- [x] done\n\n## Phase 2: Two\n- [ ] next\n")
 	mustWriteFile(t, filepath.Join(changeDir, "proposal.md"), "proposal\n")
 
-	fa := &fakeAgent{results: []agent.Result{{Stdout: "apply ok"}, {Stdout: "review ok"}, {Stdout: "final ok"}}}
+	fa := &fakeAgent{results: []agent.Result{{Stdout: "apply ok"}, {Stdout: "review ok"}, {Stdout: "commit ok"}, {Stdout: "final ok"}}}
 	git := &fakeGit{currentBranch: "change/resume-test", branchExist: true, changedFiles: []string{"file.go"}, stagedFiles: []string{"file.go"}, hasTracked: true}
 	controller := &fakeController{phaseFn: func(ctx context.Context, request ctrl.PhaseRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
 		if request.Phase.Number != 2 {
@@ -267,15 +268,18 @@ func TestPipelineResumeCreatesRecoveryCommitAndStartsAtFirstUncheckedPhase(t *te
 		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "2", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
 			return nil, err
 		}
-		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"ok"}`)}); err != nil {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolCommit, Arguments: []byte(`{"message":"feat(resume-test): phase 2"}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"ok"}`)}); err != nil {
 			return nil, err
 		}
 		return &ctrl.Result{Summary: "ok"}, nil
 	}, finalFn: func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
-		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
 			return nil, err
 		}
-		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final"}`)}); err != nil {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "6", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final"}`)}); err != nil {
 			return nil, err
 		}
 		return &ctrl.Result{Summary: "final"}, nil
@@ -294,20 +298,9 @@ func TestPipelineResumeCreatesRecoveryCommitAndStartsAtFirstUncheckedPhase(t *te
 			t.Fatalf("git.calls missing %q in %#v", want, git.calls)
 		}
 	}
-	// On resume, commitArtifacts (the initial add-all for specs) is skipped.
-	// The phase commit still uses add-all to stage agent-created files.
-	if !containsCallPrefix(git.calls, "add-all") {
-		t.Fatalf("expected add-all for phase commit in: %#v", git.calls)
-	}
-	// But there should be exactly one add-all (for the phase, not for artifacts)
-	addAllCount := 0
-	for _, call := range git.calls {
-		if call == "add-all" {
-			addAllCount++
-		}
-	}
-	if addAllCount != 1 {
-		t.Fatalf("expected 1 add-all (phase only), got %d in: %#v", addAllCount, git.calls)
+	// No add-all expected — commits are done by the agent now.
+	if containsCallPrefix(git.calls, "add-all") {
+		t.Fatalf("unexpected add-all in: %#v", git.calls)
 	}
 }
 
@@ -476,12 +469,14 @@ func TestPipelineEmitsTraceEventsInOrder(t *testing.T) {
 		results: []agent.Result{
 			{Stdout: "apply ok", ExitCode: 0, Duration: 10 * time.Millisecond},
 			{Stdout: "no issues found", ExitCode: 0, Duration: 20 * time.Millisecond},
+			{Stdout: "committed", ExitCode: 0, Duration: 5 * time.Millisecond},
 			{Stdout: "approved", ExitCode: 0, Duration: 30 * time.Millisecond},
 		},
 		rpc: &fakeRPC{sessionIDs: map[agent.Step]string{
 			agent.StepApply:       "impl-session",
 			agent.StepReview:      "review-session",
 			agent.StepFinalReview: "final-session",
+			agent.StepCommit:      "commit-session",
 		}},
 	}
 	git := &fakeGit{changedFiles: []string{"internal/pipeline/pipeline.go"}, stagedFiles: []string{"internal/pipeline/pipeline.go"}}
@@ -493,15 +488,18 @@ func TestPipelineEmitsTraceEventsInOrder(t *testing.T) {
 		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "2", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
 			return nil, err
 		}
-		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)}); err != nil {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolCommit, Arguments: []byte(`{"message":"feat(trace-order): complete phase 1"}`)}); err != nil {
+			return nil, err
+		}
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)}); err != nil {
 			return nil, err
 		}
 		return &ctrl.Result{Summary: "phase passed"}, nil
 	}, finalFn: func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
-		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
 			return nil, err
 		}
-		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)}); err != nil {
+		if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "6", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)}); err != nil {
 			return nil, err
 		}
 		return &ctrl.Result{Summary: "final passed"}, nil
@@ -530,39 +528,52 @@ func TestPipelineEmitsTraceEventsInOrder(t *testing.T) {
 	}
 
 	assertEventTypeSubsequence(t, events,
-		"pipeline.StateEvent",
-		"pipeline.StateEvent",
-		"pipeline.StateEvent",
-		"pipeline.GitCommitEvent",
-		"pipeline.StateEvent",
+		"pipeline.StateEvent",                    // Init
+		"pipeline.StateEvent",                    // Branch
+		"pipeline.StateEvent",                    // PhaseLoop
 		"pipeline.PhaseStartEvent",
-		"pipeline.ControllerActivityEvent",
+		"pipeline.ControllerActivityEvent",        // analyzing
+		"pipeline.ControllerToolCallStartEvent",   // submit_prompt
 		"pipeline.ExecutionContextEvent",
 		"pipeline.AgentInvokeEvent",
 		"pipeline.AgentResultEvent",
 		"pipeline.OutputEvent",
-		"pipeline.ControllerActivityEvent",
+		"pipeline.ControllerToolCallResultEvent",
+		"pipeline.ControllerActivityEvent",        // analyzing
+		"pipeline.ControllerToolCallStartEvent",   // run_review
 		"pipeline.ExecutionContextEvent",
 		"pipeline.AgentInvokeEvent",
 		"pipeline.AgentResultEvent",
 		"pipeline.OutputEvent",
 		"pipeline.ReviewResultEvent",
-		"pipeline.ControllerActivityEvent",
+		"pipeline.ControllerToolCallResultEvent",
+		"pipeline.ControllerActivityEvent",        // analyzing
+		"pipeline.ControllerToolCallStartEvent",   // commit
+		"pipeline.GitCommitEvent",                 // from commitViaAgent
+		"pipeline.ControllerToolCallResultEvent",
+		"pipeline.ControllerActivityEvent",        // analyzing
+		"pipeline.ControllerToolCallStartEvent",   // approve
+		"pipeline.ControllerToolCallResultEvent",
+		"pipeline.ControllerActivityEvent",        // done
 		"pipeline.PhaseResultEvent",
-		"pipeline.GitCommitEvent",
-		"pipeline.StateEvent",
+		"pipeline.StateEvent",                     // FinalReview
 		"pipeline.ControllerActivityEvent",
+		"pipeline.ControllerToolCallStartEvent",   // run_review
 		"pipeline.ExecutionContextEvent",
 		"pipeline.AgentInvokeEvent",
 		"pipeline.AgentResultEvent",
 		"pipeline.OutputEvent",
 		"pipeline.ReviewResultEvent",
-		"pipeline.ControllerActivityEvent",
-		"pipeline.StateEvent",
+		"pipeline.ControllerToolCallResultEvent",
+		"pipeline.ControllerActivityEvent",        // analyzing
+		"pipeline.ControllerToolCallStartEvent",   // approve
+		"pipeline.ControllerToolCallResultEvent",
+		"pipeline.ControllerActivityEvent",        // done
+		"pipeline.StateEvent",                     // PR
 		"pipeline.GitPushEvent",
 		"pipeline.PREvent",
 		"pipeline.SummaryEvent",
-		"pipeline.StateEvent",
+		"pipeline.StateEvent",                     // Done
 	)
 
 	phaseReview := findEvent[ReviewResultEvent](t, events, func(e ReviewResultEvent) bool { return e.Step == "phase" })

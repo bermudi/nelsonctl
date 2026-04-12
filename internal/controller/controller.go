@@ -22,6 +22,7 @@ const (
 	ToolGetDiff      ToolName = "get_diff"
 	ToolSubmitPrompt ToolName = "submit_prompt"
 	ToolRunReview    ToolName = "run_review"
+	ToolCommit       ToolName = "commit"
 	ToolApprove      ToolName = "approve"
 )
 
@@ -36,6 +37,10 @@ type SubmitPromptArgs struct {
 }
 
 type RunReviewArgs struct{}
+
+type CommitArgs struct {
+	Message string `json:"message"`
+}
 
 type ApproveArgs struct {
 	Summary string `json:"summary"`
@@ -389,8 +394,20 @@ func ToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
+			Name:        ToolCommit,
+			Description: "Tell the implementation agent to stage all changes and commit with the given message. The agent handles .gitignore, staging, and the commit. Call this before approve.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"message": map[string]any{"type": "string", "description": "Git commit message for the agent's work."},
+				},
+				"required":             []string{"message"},
+				"additionalProperties": false,
+			},
+		},
+		{
 			Name:        ToolApprove,
-			Description: "Approve the phase or final review with a one-line summary.",
+			Description: "Approve the phase or final review with a one-line summary. You must call commit before approve.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

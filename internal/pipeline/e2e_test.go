@@ -51,6 +51,24 @@ func (a *e2eAgent) ExecuteStep(ctx context.Context, step agent.Step, prompt, mod
 		return &agent.Result{Stdout: "no issues found", ExitCode: 0}, nil
 	case agent.StepFix:
 		return &agent.Result{Stdout: "fixed", ExitCode: 0}, nil
+	case agent.StepCommit:
+		// Actually commit using git.
+		cmd := exec.CommandContext(ctx, "git", "add", "-A")
+		cmd.Dir = a.repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("git add: %w: %s", err, out)
+		}
+		// Extract message from prompt after the colon
+		msg := "commit"
+		if idx := strings.LastIndex(prompt, "\n"); idx >= 0 {
+			msg = strings.TrimSpace(prompt[idx+1:])
+		}
+		cmd = exec.CommandContext(ctx, "git", "commit", "-m", msg)
+		cmd.Dir = a.repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return &agent.Result{Stdout: string(out), ExitCode: 1}, nil
+		}
+		return &agent.Result{Stdout: "committed", ExitCode: 0}, nil
 	}
 	return &agent.Result{Stdout: "ok", ExitCode: 0}, nil
 }
@@ -65,17 +83,20 @@ func e2eController() *fakeController {
 			if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "2", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
 				return nil, err
 			}
-			approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)})
+			if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "3", Name: ctrl.ToolCommit, Arguments: []byte(fmt.Sprintf(`{"message":"feat(%s): complete phase %d - %s"}`, request.ChangeName, request.Phase.Number, request.Phase.Name))}); err != nil {
+				return nil, err
+			}
+			approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"phase passed"}`)})
 			if err != nil {
 				return nil, err
 			}
 			return &ctrl.Result{Summary: approve.Summary}, nil
 		},
 		finalFn: func(ctx context.Context, request ctrl.FinalReviewRequest, dispatcher ctrl.Dispatcher) (*ctrl.Result, error) {
-			if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "4", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
+			if _, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolRunReview, Arguments: []byte(`{}`)}); err != nil {
 				return nil, err
 			}
-			approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "5", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)})
+			approve, err := dispatcher.Dispatch(ctx, ctrl.ToolCall{ID: "6", Name: ctrl.ToolApprove, Arguments: []byte(`{"summary":"final passed"}`)})
 			if err != nil {
 				return nil, err
 			}
@@ -192,20 +213,14 @@ func TestE2ERealGitSinglePhase(t *testing.T) {
 	}
 
 	commits := gitLog(t, repoDir)
-	if len(commits) < 3 {
-		t.Fatalf("expected at least 3 commits (initial + artifacts + phase), got %d: %v", len(commits), commits)
+	if len(commits) < 2 {
+		t.Fatalf("expected at least 2 commits (initial + phase), got %d: %v", len(commits), commits)
 	}
-	var hasArtifacts, hasPhase bool
+	var hasPhase bool
 	for _, c := range commits {
-		if strings.Contains(c, "chore: add litespec artifacts") {
-			hasArtifacts = true
-		}
 		if strings.Contains(c, "feat(uppercase-greet): complete phase 1") {
 			hasPhase = true
 		}
-	}
-	if !hasArtifacts {
-		t.Fatalf("missing artifacts commit in: %v", commits)
 	}
 	if !hasPhase {
 		t.Fatalf("missing phase commit in: %v", commits)
@@ -277,24 +292,18 @@ func TestE2ERealGitMultiPhase(t *testing.T) {
 	}
 
 	commits := gitLog(t, repoDir)
-	// initial + artifacts + phase1 + phase2 = 4
-	if len(commits) < 4 {
-		t.Fatalf("expected at least 4 commits, got %d: %v", len(commits), commits)
+	// initial + phase1 + phase2 = 3
+	if len(commits) < 3 {
+		t.Fatalf("expected at least 3 commits, got %d: %v", len(commits), commits)
 	}
-	var hasPhase1, hasPhase2, hasArtifacts bool
+	var hasPhase1, hasPhase2 bool
 	for _, c := range commits {
-		if strings.Contains(c, "chore: add litespec artifacts") {
-			hasArtifacts = true
-		}
 		if strings.Contains(c, "feat(multi-feature): complete phase 1") {
 			hasPhase1 = true
 		}
 		if strings.Contains(c, "feat(multi-feature): complete phase 2") {
 			hasPhase2 = true
 		}
-	}
-	if !hasArtifacts {
-		t.Fatalf("missing artifacts commit in: %v", commits)
 	}
 	if !hasPhase1 {
 		t.Fatalf("missing phase 1 commit in: %v", commits)

@@ -98,8 +98,8 @@ func TestPoeResponsesSendsCorrectFormat(t *testing.T) {
 	if sys, ok := gotBody["system_instruction"].(string); !ok || !strings.Contains(sys, "phase 1") {
 		t.Fatalf("system_instruction missing phase context")
 	}
-	if tools, ok := gotBody["tools"].([]any); !ok || len(tools) != 5 {
-		t.Fatalf("tools count = %d, want 5", len(tools))
+	if tools, ok := gotBody["tools"].([]any); !ok || len(tools) != 6 {
+		t.Fatalf("tools count = %d, want 6", len(tools))
 	}
 }
 
