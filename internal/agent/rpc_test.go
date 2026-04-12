@@ -57,6 +57,46 @@ func TestRPCClientCorrelatesResponsesAndEvents(t *testing.T) {
 	_ = stdoutWriter.Close()
 }
 
+func TestRPCClientHandlesLargeJSONLRecords(t *testing.T) {
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	stderrReader, stderrWriter := io.Pipe()
+	defer stderrWriter.Close()
+
+	client := newRPCClient(t.TempDir(), nil)
+	client.starter = func(ctx context.Context, workDir string, env []string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
+		return &exec.Cmd{}, stdinWriter, stdoutReader, stderrReader, nil
+	}
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	largeSessionPath := "/tmp/" + strings.Repeat("session-", 12000) + ".jsonl"
+	go func() {
+		scanner := bufio.NewScanner(stdinReader)
+		for scanner.Scan() {
+			var command rpcCommand
+			_ = json.Unmarshal(scanner.Bytes(), &command)
+			_, _ = fmt.Fprintf(stdoutWriter, "{\"type\":\"response\",\"id\":%q,\"command\":%q,\"success\":true,\"data\":{\"sessionId\":\"s1\",\"sessionFile\":%q}}\n", command.ID, command.Type, largeSessionPath)
+		}
+	}()
+
+	response, err := client.Send(context.Background(), rpcCommand{Type: "get_state"})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	state, err := decodeState(response)
+	if err != nil {
+		t.Fatalf("decodeState() error = %v", err)
+	}
+	if state.SessionFile != largeSessionPath {
+		t.Fatalf("state.SessionFile len=%d, want len=%d", len(state.SessionFile), len(largeSessionPath))
+	}
+
+	_ = stdinWriter.Close()
+	_ = stdoutWriter.Close()
+}
+
 func TestPiRPCAgentExecuteStepSavesSessionPath(t *testing.T) {
 	transport := &fakeTransport{
 		responses: []rpcResponse{
@@ -70,7 +110,7 @@ func TestPiRPCAgentExecuteStepSavesSessionPath(t *testing.T) {
 
 	// Pre-send completion event into buffered channel
 	transport.events <- rpcEvent{
-		Type:       "agent_end",
+		Type:        "agent_end",
 		MessageData: map[string]any{"stopReason": "endTurn"},
 	}
 
@@ -114,7 +154,7 @@ func TestPiRPCAgentExecuteStepWithModel(t *testing.T) {
 	agent.newClient = func(args []string) rpcTransport { return transport }
 
 	transport.events <- rpcEvent{
-		Type:       "agent_end",
+		Type:        "agent_end",
 		MessageData: map[string]any{"stopReason": "endTurn"},
 	}
 
@@ -270,6 +310,32 @@ func TestPiRPCAgentModelSetFailureReturnsError(t *testing.T) {
 	})
 	if modelEvent.Success {
 		t.Fatalf("model event should not be success: %+v", modelEvent)
+	}
+}
+
+func TestPiRPCAgentExecuteStepUsesPerStepTimeout(t *testing.T) {
+	transport := &fakeTransport{events: make(chan rpcEvent)}
+	agent := NewPiRPC(
+		WithWorkDir(t.TempDir()),
+		WithTimeout(time.Second),
+		WithStepTimeout(StepApply, 20*time.Millisecond),
+	).(*piRPCAgent)
+	agent.newClient = func(args []string) rpcTransport { return transport }
+
+	start := time.Now()
+	res, err := agent.ExecuteStep(context.Background(), StepApply, "prompt", "")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if res == nil || res.ExitCode != 1 {
+		t.Fatalf("result = %+v, want exit code 1", res)
+	}
+	if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
+		t.Fatalf("elapsed = %v, want step timeout to fire quickly", elapsed)
+	}
+
+	if got := transport.commandTypes(); fmt.Sprint(got) != fmt.Sprint([]string{"prompt", "abort"}) {
+		t.Fatalf("commands = %#v, want [prompt abort]", got)
 	}
 }
 

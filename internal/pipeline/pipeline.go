@@ -522,6 +522,11 @@ func (p *Pipeline) acquireLock(path string) (func() error, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read lock file: %w", err)
 	}
+	// Write .gitignore alongside the lock so AddAll never stages the lock file.
+	gitignorePath := filepath.Join(filepath.Dir(path), ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(".nelsonctl.lock\n"), 0o644); err != nil {
+		return nil, fmt.Errorf("write lock gitignore: %w", err)
+	}
 	data, err := json.Marshal(lockFile{PID: os.Getpid(), Timestamp: p.now().UTC()})
 	if err != nil {
 		return nil, fmt.Errorf("marshal lock file: %w", err)
@@ -555,19 +560,19 @@ func (p *Pipeline) commitArtifacts(ctx context.Context, changeName string, phase
 }
 
 func (p *Pipeline) commitPhase(ctx context.Context, changeName string, phase Phase) error {
-	files, err := p.Git.ChangedFiles(ctx)
-	if err != nil {
-		return fmt.Errorf("list changed files for phase commit: %w", err)
-	}
-	if len(files) == 0 {
-		return nil
-	}
-	if err := p.Git.Add(ctx, files...); err != nil {
-		return err
+	// Stage all changes including untracked files created by the agent.
+	// The agent may create new files (package.json, source files, etc.)
+	// which git diff --name-only (ChangedFiles) does not report.
+	// The lock file is excluded via .gitignore written during acquireLock.
+	if err := p.Git.AddAll(ctx); err != nil {
+		return fmt.Errorf("stage phase changes: %w", err)
 	}
 	stagedFiles, err := p.Git.StagedFiles(ctx)
 	if err != nil {
 		return fmt.Errorf("list staged files for phase commit: %w", err)
+	}
+	if len(stagedFiles) == 0 {
+		return nil
 	}
 	subject := fmt.Sprintf("feat(%s): complete phase %d - %s", changeName, phase.Number, phase.Name)
 	if err := p.Git.Commit(ctx, subject, phaseBody(phase)); err != nil {

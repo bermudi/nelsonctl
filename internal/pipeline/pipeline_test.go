@@ -227,8 +227,7 @@ func TestPipelineRunUsesControllerAndScopedPhaseCommit(t *testing.T) {
 		"add-all",
 		"staged-files",
 		"commit:chore: add litespec artifacts for initial-scaffold|Planning artifacts for initial-scaffold\n\nPhase 1: Foundation",
-		"changed-files",
-		"add:internal/pipeline/pipeline.go",
+		"add-all",
 		"staged-files",
 		"commit:feat(initial-scaffold): complete phase 1 - Foundation|Phase 1: Foundation\n- [x] Task one",
 		"push:origin|change/initial-scaffold|true",
@@ -295,8 +294,20 @@ func TestPipelineResumeCreatesRecoveryCommitAndStartsAtFirstUncheckedPhase(t *te
 			t.Fatalf("git.calls missing %q in %#v", want, git.calls)
 		}
 	}
-	if containsCallPrefix(git.calls, "add-all") {
-		t.Fatalf("unexpected artifacts commit on resume: %#v", git.calls)
+	// On resume, commitArtifacts (the initial add-all for specs) is skipped.
+	// The phase commit still uses add-all to stage agent-created files.
+	if !containsCallPrefix(git.calls, "add-all") {
+		t.Fatalf("expected add-all for phase commit in: %#v", git.calls)
+	}
+	// But there should be exactly one add-all (for the phase, not for artifacts)
+	addAllCount := 0
+	for _, call := range git.calls {
+		if call == "add-all" {
+			addAllCount++
+		}
+	}
+	if addAllCount != 1 {
+		t.Fatalf("expected 1 add-all (phase only), got %d in: %#v", addAllCount, git.calls)
 	}
 }
 

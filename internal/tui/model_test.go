@@ -35,7 +35,7 @@ func TestModelUpdateTransitions(t *testing.T) {
 	m = updated.(Model)
 
 	view := m.View()
-	for _, want := range []string{"Progress", "Output", "● passed", "Retries: 1/3", "Mode: Nelson", "Agent: pi", "Model: moonshotai/kimi-k2.5", "Resume: true", "Controller: ⚙ Controller: running review...", "Phases completed: 2", "Total attempts: 4", "Duration: 3m0s", "Branch: change/initial-scaffold", "agent line one"} {
+	for _, want := range []string{"Progress", "Output", "● passed", "Retries: 1/3", "Mode: Nelson", "Agent: pi", "Model: moonshotai/kimi-k2.5", "Resume: true", "⚙ Controller: running review...", "Phases completed: 2", "Total attempts: 4", "Duration: 3m0s", "Branch: change/initial-scaffold", "agent line one"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("View() missing %q in %q", want, view)
 		}
@@ -78,8 +78,8 @@ func TestModelKeyBindings(t *testing.T) {
 	if !m.paused {
 		t.Fatal("paused = false, want true")
 	}
-	if cmd == nil {
-		t.Fatal("expected follow-up command for pause")
+	if cmd != nil {
+		t.Fatal("pause should not spawn an extra event listener")
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -100,6 +100,16 @@ func TestListenReturnsChannelMessage(t *testing.T) {
 	}
 	if out.Chunk != "hello" {
 		t.Fatalf("OutputMsg.Chunk = %q, want hello", out.Chunk)
+	}
+}
+
+func TestModelRearmsEventLoopAfterPipelineMessage(t *testing.T) {
+	ch := make(chan tea.Msg, 1)
+	m := NewModel(nil).WithEventChannel(ch)
+
+	_, cmd := m.Update(StateMsg{State: pipeline.StatePhaseLoop})
+	if cmd == nil {
+		t.Fatal("expected follow-up command after pipeline message")
 	}
 }
 

@@ -16,32 +16,51 @@ The pipeline runs the full state machine without hanging or crashing. All plumbi
 
 ## Reproduction
 
+Reset the test repo to a clean state:
+
+```bash
+cd ~/build/nelsonctl
+bash e2e.sh
+```
+
+This resets `~/build/nelsonctl-test/` to commit `fb27c76b592` (litespec artifacts only), deletes any `change/guestbook-spa` branch, and prints `✓ ready to run nelsonctl!`. It does **not** build or run the pipeline — that's manual:
+
 ```bash
 cd ~/build/nelsonctl-test
-git checkout main
-git branch -D change/uppercase-greet 2>/dev/null
-git clean -fd
-nelsonctl --verbose --no-pr specs/changes/uppercase-greet
+nelsonctl --verbose --no-pr specs/changes/guestbook-spa
 ```
 
 For debug output:
 
 ```bash
-NELSONCTL_DEBUG=1 ~/build/nelsonctl/nelsonctl --verbose --no-pr specs/changes/uppercase-greet
+NELSONCTL_DEBUG=1 nelsonctl --verbose --no-pr specs/changes/guestbook-spa
 ```
+
+Flags: `--keep` skips the reset, `--change <name>` targets a different change, `--debug` enables debug logging.
 
 ## Test Project
 
-`~/build/nelsonctl-test/` — a minimal Go project:
+`~/build/nelsonctl-test/` — a blank repo with only litespec artifacts (initial commit `fb27c76b592`):
 
-- `greet.go` — `greet(name) string` returning `"hello, {name}"`
-- `greet_test.go` — test for greet
-- `main.go` — empty main
-- `specs/changes/uppercase-greet/` — change spec:
-  - `proposal.md` — add `UpperGreet` function
-  - `specs/greeting/spec.md` — SHALL requirement with scenario
-  - `design.md` — wraps `greet()` with `strings.ToUpper()`
-  - `tasks.md` — 2 unchecked tasks
+```
+specs/changes/guestbook-spa/
+├── .litespec.yaml
+├── proposal.md          ← motivation, scope, non-goals
+├── design.md             ← Vite + vanilla TS, directory structure, data model, CSS vars
+├── tasks.md              ← 3 phases, 18 unchecked tasks
+└── specs/
+    ├── project-setup/spec.md    ← Vite scaffold, strict TS, dev/build
+    ├── app-skeleton/spec.md     ← CSS custom properties, responsive layout, header/main/footer
+    └── guestbook/spec.md         ← GuestEntry type, localStorage, form, validation, rendering
+```
+
+Three phases:
+
+| Phase | What the agent implements |
+|-------|--------------------------|
+| 1. Project Setup | Vite + vanilla TypeScript, strict config, semantic HTML |
+| 2. App Skeleton | CSS custom properties, responsive layout, header/main/footer |
+| 3. Guest Book | GuestEntry type, localStorage persistence, form with validation, entry list |
 
 ## Configuration
 
@@ -67,33 +86,15 @@ review:
   fail_on: critical
 ```
 
-## Last Run Results (2026-04-10, commit `e6d4453`)
+## Last Run Results
 
-```
-State: Init → Branch → CommitArtifacts → PhaseLoop
-Phase 1, Attempt 1: Apply (18.8s) → Review (46.4s) → FAIL (CRITICAL: design deviation)
-Phase 1, Attempt 2: Fix  (15.8s) → Review (49.1s) → FAIL (tasks not marked done)
-Phase 1, Attempt 3: Fix  (8.9s)  → Review (47.6s) → FAIL (tasks still not marked done)
-Phase 1: Failed after 3 attempts (5m14s)
-State: Done
-```
+_No run yet against the guestbook-spa change._
 
-What happened at each step:
-
-| Step | What the agent did | Outcome |
-|------|-------------------|---------|
-| Apply | Created `upper.go` with `UpperGreet`, created `upper_test.go` with tests, ran `go test` | ✅ Code works, tests pass |
-| Review 1 | Found CRITICAL: design says wrap `greet()` but implementation reimplements greeting | ❌ Correct finding |
-| Fix 1 | Updated `upper.go` to `strings.ToUpper(greet(name))` | ✅ Fixed the design deviation |
-| Review 2 | Found CRITICAL: tasks in `tasks.md` not marked `[x]` | ❌ Correct finding but arguably should be WARNING |
-| Fix 2 | Agent claimed to mark tasks as done but didn't actually edit the file | ❌ Agent didn't execute |
-| Review 3 | Same CRITICAL: tasks still unchecked | ❌ Same issue |
-
-## Current Blockers
+## Known Issues
 
 ### 1. Agent doesn't reliably execute fix prompts
 
-The fix step tells the agent what to do (e.g., "mark tasks as done"). The agent acknowledges and describes doing it, but sometimes doesn't actually make the change. The controller has no way to verify — it sends the prompt and trusts the result.
+The fix step tells the agent what to do (e.g., "mark tasks as done"). The agent acknowledges and describes doing it, but sometimes doesn't actually make the change. Observed in the old `uppercase-greet` test — may or may not reproduce with the guestbook SPA.
 
 **Possible fixes:**
 - Controller calls `read_file` on `tasks.md` after each fix to verify the change was applied
@@ -102,7 +103,7 @@ The fix step tells the agent what to do (e.g., "mark tasks as done"). The agent 
 
 ### 2. Review severity calibration
 
-The reviewer flags unchecked tasks as CRITICAL. For the `fail_on: critical` threshold, this means a fully implemented and tested change fails because the task list wasn't updated. Whether this is correct behavior depends on how strict we want to be, but for a first pass it's too strict — the implementation is correct, only the process artifact is stale.
+The reviewer may flag unchecked tasks as CRITICAL. For `fail_on: critical`, this means a fully implemented change fails because the task list wasn't ticked. Whether this is correct depends on how strict we want to be.
 
 **Possible fixes:**
 - Tweak the `litespec-review` skill prompt to classify unchecked tasks as WARNING when code exists and passes tests
@@ -111,47 +112,31 @@ The reviewer flags unchecked tasks as CRITICAL. For the `fail_on: critical` thre
 
 ## Next Steps (Ordered)
 
-### Step 1: Verify fix execution
+### Step 1: Run against guestbook-spa and get a clean pass
 
-Add a verification step to the controller loop. After `submit_prompt` returns from a fix, the controller should call `read_file` on the relevant files to confirm the agent actually made the changes. If not, retry with a more explicit prompt.
+Run the pipeline against the 3-phase guestbook-spa change:
+- Phase 1 (Project Setup): agent scaffolds Vite + TS
+- Phase 2 (App Skeleton): agent adds layout + CSS
+- Phase 3 (Guest Book): agent implements the feature
+- Final review passes
+- Pipeline completes
 
-**Where**: `internal/controller/prompts.go` — add guidance to the system prompt about verifying fixes. Or `internal/pipeline/pipeline.go` — add a post-fix diff check.
-
-### Step 2: Run again and get a clean pass
-
-After step 1, re-run the `uppercase-greet` test and confirm:
-- Phase 1 applies, review passes (or fix + re-review passes)
-- Phase gets committed
-- Pipeline reaches FinalReview
-- Pipeline completes successfully
-
-### Step 3: Test with `--no-pr` off
+### Step 2: Test with `--no-pr` off
 
 Run without `--no-pr` to verify the PR creation step works end-to-end:
 - Branch pushes to remote
 - `gh pr create` succeeds
 - PR body includes change summary
 
-### Step 4: Test with a multi-phase change
-
-The current test is single-phase. Create a test change with 2-3 phases to verify the loop commits after each phase and proceeds correctly.
-
-### Step 5: Test edge cases
+### Step 3: Test edge cases
 
 - Phase where agent produces no changes (should fail review)
-- Phase where tests fail (agent should fix)
+- Phase where the build fails (agent should fix)
 - Phase where implementation already exists (idempotent behavior)
 
-### Step 6: Remove `NELSONCTL_DEBUG` training wheels
+### Step 4: Remove `NELSONCTL_DEBUG` training wheels
 
 The debug logging is useful but noisy. Replace with structured trace output to a file (the trace system already exists in `internal/trace/`). Make verbose mode useful without debug env var.
-
-## Commits That Got Us Here
-
-| Commit | What it fixed |
-|--------|--------------|
-| `99dba0b` | Batch fix: model inheritance, controller error handling, DeepSeek content field, text_delta parsing, event draining, activeSessionID, toolUse filter, debug logging |
-| `e6d4453` | **The critical fix**: `stopReasonFromRPCEvent` returned first match (always "toolUse") instead of last match ("stop"). Pipeline hung forever on every run before this. |
 
 ## Key Technical Reference
 

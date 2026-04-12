@@ -37,9 +37,9 @@ func NewPiRPC(opts ...Option) Agent {
 		settings.workDir = "."
 	}
 	agent := &piRPCAgent{
-		settings: settings,
+		settings:   settings,
 		lookupPath: nil,
-		events: newQueuedChannel[Event](settings.eventBufferSize()),
+		events:     newQueuedChannel[Event](settings.eventBufferSize()),
 	}
 	agent.newClient = agent.defaultNewClient
 	return agent
@@ -110,9 +110,9 @@ func (a *piRPCAgent) ExecuteStep(ctx context.Context, step Step, prompt, model s
 		return nil, fmt.Errorf("send prompt: %w", err)
 	}
 
-	// Wait for agent completion with optional timeout
+	// Wait for agent completion with optional per-step timeout
 	stepCtx := ctx
-	if timeout := a.settings.defaultTimeout; timeout > 0 {
+	if timeout := a.settings.timeoutFor(step); timeout > 0 {
 		var cancel context.CancelFunc
 		stepCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()

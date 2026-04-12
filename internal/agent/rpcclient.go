@@ -205,9 +205,20 @@ func (c *rpcClient) readStdout() {
 	defer c.readersWG.Done()
 	defer close(c.closed)
 	defer c.events.Close() // signal that no more events will come
-	scanner := bufio.NewScanner(c.stdout)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+
+	reader := bufio.NewReader(c.stdout)
+	for {
+		line, err := readJSONLRecord(reader)
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			continue
+		}
+		if len(line) == 0 {
+			continue
+		}
+
 		var envelope rpcEventEnvelope
 		if err := json.Unmarshal(line, &envelope); err != nil {
 			continue
@@ -236,6 +247,27 @@ func (c *rpcClient) readStdout() {
 		event.Raw = append(event.Raw[:0], line...)
 		c.events.Send(event)
 	}
+}
+
+func readJSONLRecord(reader *bufio.Reader) ([]byte, error) {
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		if err == io.EOF {
+			if len(line) == 0 {
+				return nil, io.EOF
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		line = line[:len(line)-1]
+	}
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	return line, nil
 }
 
 func (c *rpcClient) readStderr() {

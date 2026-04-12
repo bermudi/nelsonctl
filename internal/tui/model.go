@@ -115,13 +115,14 @@ func (m Model) Init() tea.Cmd {
 // Update handles Bubble Tea messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	rearmEvents := false
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resizeViewport()
-		return m, m.nextEventCmd()
+		return m, nil
 	case agentFlushMsg:
 		if m.pendingAgentOutput.Len() > 0 {
 			m.appendOutput(m.pendingAgentOutput.String())
@@ -146,37 +147,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				default:
 				}
 			}
-			return m, m.nextEventCmd()
+			return m, nil
 		case "j", "down":
 			m.viewport.ScrollDown(1)
-			return m, m.nextEventCmd()
+			return m, nil
 		case "k", "up":
 			m.viewport.ScrollUp(1)
-			return m, m.nextEventCmd()
+			return m, nil
 		}
 	case StateMsg:
 		m.state = msg.State
+		rearmEvents = true
 	case PhaseMsg:
 		m.setPhaseStatus(msg.Number, PhaseRunning, msg.Attempt, "")
 		m.currentPhase = msg.Number
 		m.currentAttempt = msg.Attempt
+		rearmEvents = true
 	case PhaseResultMsg:
 		status := PhaseFailed
 		if msg.Passed {
 			status = PhasePassed
 		}
 		m.setPhaseStatus(msg.Number, status, msg.Attempts, msg.Review)
+		rearmEvents = true
 	case OutputMsg:
 		m.appendOutput(msg.Chunk)
+		rearmEvents = true
 	case AgentStreamMsg:
 		m.pendingAgentOutput.WriteString(msg.Chunk)
-		return m, flushAgentOutput()
+		cmd = flushAgentOutput()
+		rearmEvents = true
 	case AgentStatusMsg:
 		m.appendOutput(msg.Text)
+		rearmEvents = true
 	case ExecutionContextMsg:
 		m.execution = ExecutionContext{Mode: msg.Mode, Agent: msg.Agent, Step: msg.Step, Model: msg.Model, Resumed: msg.Resumed}
+		rearmEvents = true
 	case ControllerActivityMsg:
 		m.controller = controllerStatus(msg)
+		rearmEvents = true
 	case SummaryMsg:
 		m.summary = &Summary{
 			PhasesCompleted: msg.PhasesCompleted,
@@ -187,14 +196,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Mode:            msg.Mode,
 			Resumed:         msg.Resumed,
 		}
+		rearmEvents = true
 	case TauntMsg:
 		m.taunt = "HA-ha!"
+		rearmEvents = true
 	}
 
 	if m.viewport.Width != m.outputWidth() || m.viewport.Height != m.outputHeight() {
 		m.resizeViewport()
 	}
-
+	if rearmEvents {
+		return m, tea.Batch(cmd, m.nextEventCmd())
+	}
 	return m, cmd
 }
 

@@ -21,7 +21,7 @@ func (m Model) renderProgress() string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("State: %s", m.state)))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("Controller: %s", m.controller)))
+	b.WriteString(mutedStyle.Render(m.controller))
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("Retries: %d/%d", m.currentAttempt, m.maxAttempts)))
 	b.WriteString("\n")
