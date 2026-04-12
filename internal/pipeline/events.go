@@ -16,6 +16,8 @@ type AgentInvokeEvent struct {
 type AgentResultEvent struct {
 	ExitCode   int
 	DurationMs int64
+	Stdout     string
+	Stderr     string
 	StdoutLen  int
 	StderrLen  int
 }

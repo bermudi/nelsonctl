@@ -627,9 +627,16 @@ func (p *Pipeline) emitAgentResult(res *agent.Result, err error, duration time.D
 			duration = res.Duration
 		}
 	}
+	stdout, stderr := "", ""
+	if res != nil {
+		stdout = res.Stdout
+		stderr = res.Stderr
+	}
 	p.emit(AgentResultEvent{
 		ExitCode:   resultExitCode(res, err),
 		DurationMs: duration.Milliseconds(),
+		Stdout:     stdout,
+		Stderr:     stderr,
 		StdoutLen:  stdoutLen,
 		StderrLen:  stderrLen,
 	})

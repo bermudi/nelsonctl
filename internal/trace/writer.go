@@ -288,6 +288,8 @@ func (tw *TraceWriter) toTraceEvent(msg interface{}) interface{} {
 			Type:       "agent_result",
 			ExitCode:   e.ExitCode,
 			DurationMs: e.DurationMs,
+			Stdout:     e.Stdout,
+			Stderr:     e.Stderr,
 			StdoutLen:  e.StdoutLen,
 			StderrLen:  e.StderrLen,
 			Ts:         timestamp(),

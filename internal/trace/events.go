@@ -44,6 +44,8 @@ type AgentResultEvent struct {
 	Type       string `json:"type"`
 	ExitCode   int    `json:"exit_code"`
 	DurationMs int64  `json:"duration_ms"`
+	Stdout     string `json:"stdout,omitempty"`
+	Stderr     string `json:"stderr,omitempty"`
 	StdoutLen  int    `json:"stdout_len"`
 	StderrLen  int    `json:"stderr_len"`
 	Ts         string `json:"ts"`
