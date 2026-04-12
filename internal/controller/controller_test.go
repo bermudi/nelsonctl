@@ -189,7 +189,7 @@ func TestNewUsesProviderEndpoints(t *testing.T) {
 		t.Fatalf("New() opencode error = %v", err)
 	}
 	oc := controller.(*openAIController)
-	if oc.endpoint != "https://openrouter.ai/api/v1/chat/completions" {
+	if oc.endpoint != "https://opencode.ai/zen/go/v1/chat/completions" {
 		t.Fatalf("opencode endpoint = %q", oc.endpoint)
 	}
 

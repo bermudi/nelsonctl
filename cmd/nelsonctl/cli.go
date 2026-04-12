@@ -166,6 +166,7 @@ func runCLI(ctx context.Context, args []string, cwd string, stdin io.Reader, std
 		p.PR = pipeline.NewGHClient()
 	} else {
 		p.PR = noopPullRequestCreator{}
+		p.SkipPush = true
 	}
 
 	if !opts.verbose && !opts.dryRun {

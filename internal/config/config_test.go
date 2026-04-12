@@ -107,8 +107,8 @@ func TestWriteOmitsCredentials(t *testing.T) {
 
 func TestValidateControllerCredentials(t *testing.T) {
 	cfg := DefaultConfig()
-	if err := ValidateControllerCredentials(cfg, func(key string) string { return "" }); err == nil || !strings.Contains(err.Error(), "OPENROUTER_API_KEY") {
-		t.Fatalf("expected missing OPENROUTER_API_KEY, got %v", err)
+	if err := ValidateControllerCredentials(cfg, func(key string) string { return "" }); err == nil || !strings.Contains(err.Error(), "OPENCODE_API_KEY") {
+		t.Fatalf("expected missing OPENCODE_API_KEY, got %v", err)
 	}
 
 	cfg.Controller.Provider = ProviderOpenRouter

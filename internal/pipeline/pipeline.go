@@ -103,6 +103,7 @@ type Pipeline struct {
 	Mode                config.ExecutionMode
 	AgentName           string
 	UseAgentEventOutput bool
+	SkipPush            bool
 
 	processExists func(pid int) bool
 	now           func() time.Time
@@ -234,10 +235,12 @@ func (p *Pipeline) Run(ctx context.Context) (*Report, error) {
 
 		if report.FinalReviewPassed {
 			emitState(StateEvent{State: StatePR})
-			if err := p.Git.Push(ctx, "origin", branchName, true); err != nil {
-				return report, err
+			if !p.SkipPush {
+				if err := p.Git.Push(ctx, "origin", branchName, true); err != nil {
+					return report, err
+				}
+				p.emit(GitPushEvent{Remote: "origin", Branch: branchName})
 			}
-			p.emit(GitPushEvent{Remote: "origin", Branch: branchName})
 			note, prURL, prErr := p.PR.Create(ctx, p.ChangePath, changeName, filepath.Join(p.ChangePath, "proposal.md"))
 			report.PullRequestNote = note
 			if prErr != nil {

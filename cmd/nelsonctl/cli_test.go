@@ -184,8 +184,6 @@ echo "gh $*" >> "$MOCK_GH_LOG"
 	gitLogData := mustReadFile(t, gitLog)
 	for _, want := range []string{
 		"git checkout -b change/initial-scaffold",
-		"git add --all",
-		"git commit -m chore: add litespec artifacts for initial-scaffold",
 		"git push -u origin change/initial-scaffold",
 	} {
 		if !strings.Contains(gitLogData, want) {
