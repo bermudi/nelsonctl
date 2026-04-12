@@ -26,7 +26,17 @@ func FinalReviewSystemPrompt(request FinalReviewRequest) string {
 func buildSystemPrompt(role string, failOn config.ReviewFailOn, tasks []string) string {
 	var builder strings.Builder
 	builder.WriteString(role)
-	builder.WriteString(" Drive the implementation loop through tool calls only. Read artifacts on demand with read_file, inspect workspace changes with get_diff, send implementation prompts with submit_prompt, run the mechanical review with run_review, commit changes with commit, and finish only by calling approve. Do not rely on regexes or output formats; reason about review output through comprehension. Only fail the review when issues at or above the configured threshold are present.")
+	builder.WriteString(` Drive the implementation loop through tool calls only.
+
+Workflow:
+1. submit_prompt to tell the agent what to implement
+2. run_review to check the result
+3. If issues found: submit_prompt with fix instructions, then run_review again
+4. When review passes: commit with a descriptive message, then approve
+
+You MUST call commit before approve. The commit tool tells the agent to stage and commit its work.
+
+Do not rely on regexes or output formats; reason about review output through comprehension. Only fail the review when issues at or above the configured threshold are present.`)
 	builder.WriteString("\n\nreview.fail_on: ")
 	builder.WriteString(string(failOn))
 	builder.WriteString("\nOnly treat findings at or above this threshold as blocking.")
@@ -44,6 +54,6 @@ func buildSystemPrompt(role string, failOn config.ReviewFailOn, tasks []string) 
 			builder.WriteByte('\n')
 		}
 	}
-	builder.WriteString("\nDo not ask for more tools, do not skip review, and approve only with a one-line summary.")
+	builder.WriteString("\nDo not ask for more tools, do not skip review, commit before approving, and approve only with a one-line summary.")
 	return strings.TrimSpace(builder.String())
 }

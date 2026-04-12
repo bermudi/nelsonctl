@@ -32,10 +32,11 @@ fail()  { printf '\033[1;31m✗ %s\033[0m\n' "$*"; }
 if $RESET; then
   info "Resetting test repo: $TEST_REPO"
   cd "$TEST_REPO"
-  git checkout main 2>/dev/null
+  git checkout -f main 2>/dev/null
   git branch -D "$BRANCH" 2>/dev/null || true
+  git checkout -f main 2>/dev/null
   git reset --hard fb27c76b592
-  git clean -fd
+  git clean -fdx
 
   # Verify tasks.md has unchecked boxes
   if ! grep -q '^\- \[ \]' "$TEST_REPO/$CHANGE_PATH/tasks.md" 2>/dev/null; then
